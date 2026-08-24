@@ -1,6 +1,6 @@
 # Azure Standard — Home Assistant Integration Proposal
 
-**Version:** 0.1 — August 2025  
+**Version:** 0.2 — August 2025  
 **Status:** Draft / Pre-development
 
 ---
@@ -10,36 +10,28 @@
 1. [API Findings](#1-api-findings)
 2. [Authentication Model](#2-authentication-model)
 3. [Confirmed Endpoints](#3-confirmed-endpoints)
-4. [Proposed HA Entities](#4-proposed-ha-entities)
-5. [Integration Architecture](#5-integration-architecture)
-6. [Build Plan](#6-build-plan)
-7. [Limitations & Risks](#7-limitations--risks)
+4. [Setup Modes](#4-setup-modes)
+5. [Smart Product Discovery Engine](#5-smart-product-discovery-engine)
+6. [Proposed HA Entities](#6-proposed-ha-entities)
+7. [Integration Architecture](#7-integration-architecture)
+8. [Build Plan](#8-build-plan)
+9. [Limitations & Risks](#9-limitations--risks)
 
 ---
 
 ## 1. API Findings
 
-Azure Standard does not publish a public API, but their website is a JavaScript SPA (AngularJS) that consumes a REST API at `https://api.azurestandard.com`. All product, drop, and scheduling data is fetched from this API. It responds to plain HTTP requests with JSON.
+Azure Standard does not publish a public API, but their website is a JavaScript SPA (AngularJS) that consumes a REST API at `https://api.azurestandard.com`. It responds to plain HTTP requests with JSON.
 
-**Good news:** Product listings, drop locations, and upcoming cutoff date schedules are all available **without authentication**. No API key is needed for the read-only data an HA integration would primarily use.
+**No auth needed:** Product listings, drop locations, upcoming cutoff date schedules, and current product prices.
 
-**Auth required for:** Cart contents, shopping lists, order history, ordered products, and account details. Authentication uses **cookie-based sessions** (`withCredentials: true`), not API keys or OAuth tokens. The HA integration will need to log in with your email/password and persist the session cookie.
+**Auth required:** Cart, shopping lists, order history, ordered products, account info. Authentication uses **cookie-based sessions** — `POST /login` returns a session cookie `id` that is sent with all subsequent requests via `withCredentials: true`.
 
 ---
 
 ## 2. Authentication Model
 
-From the JavaScript source, the auth flow is:
-
-1. `POST /login` — submits `email` + `password`, receives a session cookie named `id`
-2. All subsequent requests include that cookie via `withCredentials: true`
-3. `GET /session` — returns current session state (used to verify login is still valid)
-4. `POST /logout` — invalidates the session
-
-The session cookie is long-lived (authenticated sessions appear similar to the 10-year anonymous cookies). In practice the HA coordinator will log in once on setup, store the cookie, and refresh it when a 401 is received.
-
 ```http
-# Auth flow example
 POST https://api.azurestandard.com/login
 Content-Type: application/json
 
@@ -47,12 +39,12 @@ Content-Type: application/json
 
 → Set-Cookie: id=<session_token>; Domain=.azurestandard.com; Secure; HttpOnly
 
-# All subsequent authenticated calls
+# All subsequent authenticated calls:
 GET https://api.azurestandard.com/ordered-packaged-products
 Cookie: id=<session_token>
 ```
 
-> ⚠️ Credentials will be stored in HA's secrets / config entry storage. The integration should use HA's built-in `aiohttp` `CookieJar` and store only the session token — never the raw password after initial login.
+The integration uses HA's `aiohttp` `CookieJar`, stores only the session token (never the raw password after first login), and re-authenticates automatically on 401.
 
 ---
 
@@ -60,150 +52,294 @@ Cookie: id=<session_token>
 
 ### Public — no auth needed
 
-| Endpoint | Description | Key Fields |
-|---|---|---|
-| `GET /drops` | All drop locations with upcoming order cutoff dates | `id`, `name`, `geo`, `active`, `exclusivity`, `order-frequency[].cutoff` |
-| `GET /drops/{id}` | Single drop location detail | Same as above, scoped to one drop |
-| `GET /products` | Product catalogue (filterable) | `categoryId`, `limit`, `offset` query params; returns packaging, price, stock, images |
-| `GET /products/{id}` | Single product detail | Full packaging/stock/price detail |
+| Endpoint | Key Fields |
+|---|---|
+| `GET /drops` | `id`, `name`, `geo`, `active`, `order-frequency[].cutoff` (weekly cutoff dates ~6 months out) |
+| `GET /drops/{id}` | Single drop with full cutoff schedule |
+| `GET /products?categoryId={id}&limit={n}` | Products with `packaging[].code`, `price`, `stock`, `images` |
+| `GET /products/{id}` | Full single-product detail |
 
-### Authenticated — requires session cookie
+### Authenticated
 
-| Endpoint | Description | Key Fields |
-|---|---|---|
-| `GET /session` | Current session / login verification | `person` object with email, drop assignments, issue flags |
-| `GET /person/{id}` | Account profile | Addresses, drop assignment, account flags |
-| `GET /ordered-packaged-products` | Products you have ordered historically | `packaging.code`, `orderRecency`, `quantity-ordered`, `last-order-placed` |
-| `GET /orders/orders` | Your order history list | Order IDs, status, cutoff, trip/delivery date, totals |
-| `GET /order/{id}` | Single order detail + line items | Line items, quantities, pricing, delivery status |
-| `GET /products/product_lists` | Your saved shopping lists | List name, items, quantities |
-| `GET /products/shop_product_lists` | Public / followed lists | Shared community lists you follow |
-| `GET /account-entries` | Account financial entries (credits, invoices) | Credit balance, invoices, payments |
-| `GET /accounts_receivable/spend-metrics` | Spend summary metrics | Total spend, order counts |
-
-> The JS source also references `packaging.next-purchase-arrival` and `packaging.vendorShortedLastPurchase` fields on ordered products — these are exactly what is needed to surface "last ordered date" and expected arrival per product.
+| Endpoint | Key Fields |
+|---|---|
+| `GET /session` | `person.email`, `person.order-place-issue`, drop assignment |
+| `GET /person/{id}` | Profile, addresses, drop assignment |
+| `GET /ordered-packaged-products` | `last-order-placed`, `first-order-placed`, `quantity-ordered`, `orderRecency`, `packaging.next-purchase-arrival`, `packaging.vendorShortedLastPurchase` |
+| `GET /orders/orders` | Order list with status, cutoff date, trip/delivery date, totals |
+| `GET /order/{id}` | Single order with all line items |
+| `GET /products/product_lists` | Saved shopping lists with items + quantities |
+| `GET /products/shop_product_lists` | Public/followed community lists |
+| `GET /account-entries` | Credit balance, invoices, payments |
+| `GET /accounts_receivable/spend-metrics` | Total spend, order counts |
+| `GET /accounts_receivable/pending-payments-state` | Outstanding payment state |
 
 ---
 
-## 4. Proposed HA Entities
+## 4. Setup Modes
 
-### Drop & Cutoff Sensors *(Public API — no auth needed)*
+The integration config flow offers two paths:
 
-| Entity ID | Description |
-|---|---|
-| `sensor.azure_standard_next_cutoff` | Date of next order cutoff for your assigned drop |
-| `sensor.azure_standard_days_until_cutoff` | Integer countdown (days) to next cutoff |
-| `sensor.azure_standard_drop_name` | Name of your assigned drop location |
-| `sensor.azure_standard_delivery_date` | Expected pickup/delivery date for the current order cycle |
-| `binary_sensor.azure_standard_order_window_open` | ON when an active order cycle is open (before cutoff), OFF after |
+### Mode A: Manual (No Account Login)
 
-### Order Status Sensors *(Auth Required)*
+For users who only want drop/cutoff tracking. Requires only a **Drop ID** (numeric — find yours by searching `https://api.azurestandard.com/drops` and matching by name/location).
 
-| Entity ID | Description |
-|---|---|
-| `sensor.azure_standard_active_order_status` | Status of your current open order (e.g. "open", "submitted", "shipped") |
-| `sensor.azure_standard_active_order_item_count` | Number of line items in the current open order |
-| `sensor.azure_standard_active_order_total` | Dollar total of the current open order |
-| `sensor.azure_standard_last_order_date` | Date of the most recently completed order |
+**Entities available:** Next cutoff date, days until cutoff, delivery date, order window binary sensor, drop name.
 
-### Shopping List Sensors *(Auth Required)*
+**Not available:** Shopping lists, order history, product sensors.
 
-| Entity ID | Description |
-|---|---|
-| `sensor.azure_standard_list_{name}_count` | Item count in each of your saved shopping lists (one sensor per list) |
-| `sensor.azure_standard_list_{name}_items` | Attribute containing full item details (name, code, qty) from each list |
+### Mode B: Account (Full Access)
 
-### Product / Order History Sensors *(Auth Required)*
+Login with Azure Standard email + password. Drop is **auto-detected from your account's assigned default drop** with option to override.
 
-| Entity ID | Description |
-|---|---|
-| `sensor.azure_standard_product_{code}_last_ordered` | Date a specific product code was last ordered (configured per-product) |
-| `sensor.azure_standard_product_{code}_times_ordered` | Lifetime order count for a tracked product |
+**Entities available:** Everything in Mode A plus orders, shopping lists, product discovery sensors, account credit.
 
-### Account Sensors *(Auth Required)*
-
-| Entity ID | Description |
-|---|---|
-| `sensor.azure_standard_account_credit` | Current Azure Cash / account credit balance |
-| `sensor.azure_standard_pending_payment` | Outstanding payment amount, if any |
+**Options flow (after setup):**
+- Re-configure credentials / change drop
+- Enable/disable smart product discovery
+- Set minimum purchase count threshold (default: 3)
+- Manage tracked product list — add/remove packaging codes
 
 ---
 
-## 5. Integration Architecture
+## 5. Smart Product Discovery Engine
+
+Inspired by the learning/suggestion architecture in [ha_washdata](https://github.com/3dg1luk43/ha_washdata), the integration includes a `ProductDiscoveryEngine` that analyzes your purchase history and proposes dedicated HA sensors for frequently purchased products.
+
+### Core concept
+
+`GET /ordered-packaged-products` returns every product you've ever ordered, with fields:
+- `last-order-placed` — most recent order date
+- `first-order-placed` — oldest order date
+- `quantity-ordered` — total units purchased
+- `orderRecency` — recency indicator
+- `packaging.next-purchase-arrival` — if re-ordered today, estimated arrival
+- `packaging.vendorShortedLastPurchase` — whether the last order was shorted by the vendor
+
+From this, the engine computes per-product statistics and surfaces sensor proposals.
+
+### Statistical model (per product)
+
+```python
+@dataclass
+class ProductStats:
+    packaging_code: str           # e.g. "CT123"
+    product_name: str
+    total_orders: int             # total times purchased
+    first_ordered: date
+    last_ordered: date
+    avg_days_between_orders: float | None   # None if < 2 orders
+    median_days_between_orders: float | None
+    price_history: list[tuple[date, float]] # (date, price) — rolling 90 days in HA storage
+    current_price: float
+    avg_price: float              # rolling average for on-sale detection
+    is_on_sale: bool              # current_price < avg_price * SALE_THRESHOLD
+    sale_discount_pct: float | None
+    next_suggested_order_date: date | None  # last_ordered + avg_days_between_orders
+    days_until_suggested_order: int | None  # sensor value (negative = overdue)
+    was_shorted_last_purchase: bool
+```
+
+### Discovery flow
+
+```
+1. Coordinator fetches /ordered-packaged-products (every 24h)
+   ↓
+2. ProductDiscoveryEngine.analyze(products):
+   - Filter: total_orders >= MIN_PURCHASE_COUNT (default 3)
+   - Filter: not already a tracked sensor
+   - Compute stats for each candidate
+   ↓
+3. New candidates → HA persistent notification:
+   "Azure Standard: 5 frequently purchased products can have sensors created.
+    [Manage in integration options →]"
+   ↓
+4. Options flow "Suggested Products" step:
+   ┌─────────────────────────────────────────────────────────┐
+   │ Product Name      Code    Orders  Avg Interval  On Sale │
+   │ ✅ Canned Tomatoes CT123   12      21 days       No      │
+   │ ✅ Olive Oil       OO456   8       35 days       YES -12%│
+   │ ☐  Black Beans    BB789   3       —             No      │
+   └─────────────────────────────────────────────────────────┘
+   [Save] → entities created immediately, no HA restart required
+```
+
+### Minimum evidence bars (washdata-inspired guards)
+
+Borrowed from washdata's `_CLEAN_MIN_DURATION_S` / `MIN_SUGGESTION_COOLDOWN_CYCLES` pattern — do not propose sensors for products that don't have sufficient purchase history:
+
+```python
+MIN_PURCHASE_COUNT = 3          # must have ordered at least this many times
+MIN_DATE_SPAN_DAYS = 30         # must span at least 30 days of history to compute an interval
+SALE_THRESHOLD = 0.95           # price must be < 95% of avg price to flag as "on sale"
+PRICE_HISTORY_DAYS = 90         # rolling window for price history stored in HA
+```
+
+---
+
+## 6. Proposed HA Entities
+
+### Drop & Cutoff *(no auth needed)*
+
+| Entity ID | Description |
+|---|---|
+| `sensor.azure_standard_next_cutoff` | Date of next order cutoff |
+| `sensor.azure_standard_days_until_cutoff` | Days countdown (integer) — great for automations |
+| `sensor.azure_standard_drop_name` | Your drop location name |
+| `sensor.azure_standard_delivery_date` | Expected pickup/delivery date |
+| `binary_sensor.azure_standard_order_window_open` | ON = order window open; OFF = past cutoff |
+
+### Order Status *(auth required)*
+
+| Entity ID | Description |
+|---|---|
+| `sensor.azure_standard_active_order_status` | `open` / `submitted` / `shipped` / `delivered` |
+| `sensor.azure_standard_active_order_item_count` | Line item count in current open order |
+| `sensor.azure_standard_active_order_total` | Dollar total of current open order |
+| `sensor.azure_standard_last_order_date` | Date of most recently completed order |
+
+### Shopping Lists *(auth required — dynamically created)*
+
+One sensor per saved list:
+
+| Entity ID | Description |
+|---|---|
+| `sensor.azure_standard_list_{name}_count` | Item count in list |
+
+Attributes: `items` (array of name/code/qty), `list_uid`, `last_updated`.
+
+### Per-Product Sensor Group *(auth required — created via discovery or manually)*
+
+For each tracked packaging code, these sensors are created as a logical device group:
+
+| Entity ID | Description |
+|---|---|
+| `sensor.azure_{product_name}_last_ordered` | Date last purchased |
+| `sensor.azure_{product_name}_times_ordered` | Total lifetime purchase count |
+| `sensor.azure_{product_name}_avg_order_interval` | Average days between orders |
+| `sensor.azure_{product_name}_days_until_reorder` | Days until suggested reorder (negative = overdue) |
+| `sensor.azure_{product_name}_current_price` | Current price from live catalogue |
+| `binary_sensor.azure_{product_name}_on_sale` | ON when price is significantly below rolling average |
+
+`on_sale` attributes: `current_price`, `average_price`, `discount_percent`, `price_history`.
+
+### Account *(auth required)*
+
+| Entity ID | Description |
+|---|---|
+| `sensor.azure_standard_account_credit` | Azure Cash / account credit balance |
+| `sensor.azure_standard_pending_payment` | Outstanding payment amount |
+
+---
+
+## 7. Integration Architecture
 
 ### File layout
 
 ```
 custom_components/azure_standard/
-├── __init__.py           # Setup entry point, DataUpdateCoordinator
-├── manifest.json         # Domain, version, dependencies
-├── config_flow.py        # UI setup: email + password + drop ID
-├── const.py              # Constants, endpoint URLs, scan intervals
-├── api.py                # Async API client (aiohttp, cookie auth)
-├── coordinator.py        # DataUpdateCoordinator — fetches & caches all data
-├── sensor.py             # All sensor entities
-├── binary_sensor.py      # Order window open/closed
-├── strings.json          # UI strings
-└── translations/
-    └── en.json
+├── __init__.py               # async_setup_entry, async_unload_entry
+├── manifest.json             # domain, version, dependencies (aiohttp built-in)
+├── config_flow.py            # mode select → manual path OR account login path + options
+├── const.py                  # all constants, URLs, intervals
+├── api.py                    # async API client — AzureStandardApiClient
+├── coordinator.py            # DataUpdateCoordinator — all polling logic
+├── discovery.py              # ProductDiscoveryEngine + ProductStats dataclass
+├── sensor.py                 # all sensor entities (static + dynamic product sensors)
+├── binary_sensor.py          # order window + on-sale binary sensors
+├── entity.py                 # AzureStandardEntity base class
+├── strings.json
+└── translations/en.json
 ```
 
-### Coordinator & polling strategy
+### Coordinator polling
 
-| Data type | Poll interval | Requires auth |
+| Data | Interval | Auth? |
 |---|---|---|
-| Drop cutoff dates | Every 6 hours | No |
-| Active order status | Every 1 hour | Yes |
-| Shopping lists | Every 30 minutes | Yes |
-| Order history / ordered products | Every 24 hours | Yes |
-| Account credit balance | Every 24 hours | Yes |
-| Session validation | Every 12 hours | Yes |
+| Drop cutoff dates | 6 hours | No |
+| Product prices (for on-sale) | 6 hours | No |
+| Active order status | 1 hour | Yes |
+| Shopping lists | 30 minutes | Yes |
+| Order history + ordered products | 24 hours | Yes |
+| Account credit | 24 hours | Yes |
+| Session validation | 12 hours | Yes |
 
-### Config flow inputs
+### Dynamic entity creation
 
-- **Email** — Azure Standard account email
-- **Password** — stored encrypted in HA config entry; used only to refresh sessions
-- **Drop ID** — numeric ID of your pickup drop (auto-detectable from account, or entered manually)
-- **Products to track** — optional list of packaging codes you want "last ordered" sensors for
+Product sensors are created live from the options flow without requiring an HA restart. The coordinator holds a registry of `async_add_entities` callbacks per platform, and calls them when new products are confirmed.
 
-### Authentication & error handling
+```python
+# coordinator.py
+for code in self.data.newly_confirmed_products:
+    self._platform_callbacks[Platform.SENSOR](
+        [AzureProductSensor(self, code, stat) for stat in stats]
+    )
+```
 
-- On first setup: `POST /login` → persist session cookie in config entry data
-- On 401 from any call: automatically re-authenticate once, then surface `ConfigEntryAuthFailed` to prompt user if still failing
-- Public endpoints (drops/cutoffs) continue to work and update even if auth lapses
+### Config flow step sequence
+
+```
+async_step_user          → "Manual" or "Account login"
+  ├─ async_step_manual   → enter Drop ID → create entry (mode=manual)
+  └─ async_step_account  → enter email + password
+        └─ validate → async_step_drop_confirm
+              └─ confirm/override drop → create entry (mode=account)
+
+OptionsFlowHandler:
+  async_step_init        → credentials, drop, discovery settings
+  async_step_products    → checkbox table: suggested + tracked products
+```
 
 ---
 
-## 6. Build Plan
+## 8. Build Plan
 
-| Phase | Work | Effort est. |
+| Phase | Work | Est. |
 |---|---|---|
-| **Phase 1** — Core scaffold | `manifest.json`, `const.py`, `__init__.py`, basic config flow (email + drop ID), async API client for public endpoints only | ~2 hrs |
-| **Phase 2** — Drop & cutoff sensors | Coordinator fetches `/drops/{id}`, creates `next_cutoff`, `days_until_cutoff`, `delivery_date`, `order_window_open` binary sensor | ~1.5 hrs |
-| **Phase 3** — Auth & order sensors | Login flow, session management, active order sensors, last order date | ~2 hrs |
-| **Phase 4** — Shopping lists | Fetch `/products/product_lists`, dynamically create one sensor per list | ~1.5 hrs |
-| **Phase 5** — Ordered product tracking | Fetch `/ordered-packaged-products`, create configurable per-product last-ordered sensors | ~1 hr |
-| **Phase 6** — Account & credit sensors | Fetch `/account-entries` and `/accounts_receivable/spend-metrics` | ~1 hr |
-| **Polish** — Translations, icons, docs | Friendly entity names, icons, README with setup instructions | ~1 hr |
+| 1 — Core scaffold | `manifest.json`, `const.py`, `__init__.py`, `entity.py`, `api.py` (public only), config flow mode select + manual path | 2 hr |
+| 2 — Drop & cutoff sensors | Public coordinator, all 5 drop/cutoff entities, manual mode complete and working | 1.5 hr |
+| 3 — Account login mode | Login flow, session cookie management, config flow account path + drop confirm step | 2 hr |
+| 4 — Order sensors | Active order + history sensors | 1.5 hr |
+| 5 — Shopping list sensors | Dynamic per-list sensor creation | 1 hr |
+| 6 — Product discovery engine | `discovery.py` — `ProductDiscoveryEngine`, `ProductStats`, stats computation, HA repair notification | 2.5 hr |
+| 7 — Product sensors | Per-product sensor group (last ordered, interval, reorder countdown, price, on-sale) | 1.5 hr |
+| 8 — Options flow product management | Checkbox table UI, dynamic entity creation without restart, price history HA storage | 1.5 hr |
+| 9 — Account sensors | Credit + pending payment | 0.5 hr |
+| Polish | Translations, icons, README setup guide | 1 hr |
 
-**Total estimated effort: ~10 hours** for a full-featured v1 integration.
+**Total: ~15 hours** for full v1.
 
-### Example automation use cases unlocked
+### Automation examples unlocked
 
-- Notify 2 days before cutoff: *"Your Azure Standard order closes in 2 days — don't forget to add items!"*
-- Dashboard tile showing days until next pickup
-- Alert when a shopping list exceeds a configured item count
-- Reminder if a product you order regularly hasn't been ordered in 30+ days
-- Notification when order status changes to "shipped"
+- Notify 2 days before cutoff: *"Your Azure Standard order closes in 2 days — add items now!"*
+- Dashboard tile: days until pickup with green/yellow/red color coding
+- On-sale alert: *"Olive Oil is 15% off this week — add it to your order!"*
+- Reorder reminder: *"You're 5 days overdue to order Canned Tomatoes"*
+- Shopping list alert: *"Your Staples list has 18 items — did you forget to submit your order?"*
+- Order shipped notification: *"Your Azure Standard order is on the way!"*
 
 ---
 
-## 7. Limitations & Risks
+## 9. Limitations & Risks
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| API is undocumented and unofficial | Medium | Endpoints have been stable for years. If they break, the integration gracefully marks entities unavailable rather than crashing. |
-| Azure Standard could add rate limiting | Medium | Conservative poll intervals (minimum 30 min for auth endpoints) keep request volume very low — well under normal browser usage. |
-| Cookie auth may expire unexpectedly | Low | HA will automatically re-authenticate and surface a repair notification if credentials are invalid. |
-| JS bundle file hashes change on deploys | None | Integration calls the API directly — it never parses the HTML or JS. API URL structure is stable. |
-| No official terms covering API use | Medium | Integration mimics normal user browser behavior. No bulk scraping. One user's data only. |
+| API is undocumented and unofficial | Medium | Stable for years. Entities go `unavailable` gracefully on changes. |
+| Azure Standard could add rate limiting | Medium | Conservative poll intervals well under normal browser usage. |
+| Cookie auth may expire | Low | Auto re-auth; `ConfigEntryAuthFailed` triggers HA repair notification. |
+| Order interval computed from aggregate, not per-order dates | Medium | `ordered-packaged-products` has `first/last-order-placed` + `quantity-ordered`. If more precision needed, `orders/orders` + `order/{id}` provide full per-order line item history. |
+| Price history not stored by Azure Standard | Low | Snapshots stored locally via HA `homeassistant.helpers.storage` persistent store. On-sale detection builds its own history over time. |
+| No official API terms | Medium | Mimics normal user browser behavior, single user's data, conservative polling. |
+
+---
+
+## Reference: washdata Patterns Applied
+
+| washdata | Applied as |
+|---|---|
+| `SuggestionEngine` — learns from real cycle data | `ProductDiscoveryEngine` — learns order patterns from purchase history |
+| `StatisticalModel` — rolling median/p95 per metric | `ProductStats` — rolling avg, median, price history per product |
+| `MIN_SUGGESTION_COOLDOWN_CYCLES` / `MIN_SUGGESTION_REL_DELTA` | `MIN_PURCHASE_COUNT` / `MIN_DATE_SPAN_DAYS` — evidence bars before proposing |
+| Clean-cycle guards (`_CLEAN_MIN_DURATION_S`, etc.) | Clean-product guards — filter products with only 1 purchase or very old data |
+| `OptionsFlowHandler` — structural tuning separate from main panel | Options "Manage Products" — product checkbox table separate from initial setup |
+| `profile_store.py` persistent JSON | HA `Store` (`homeassistant.helpers.storage`) for price history + discovery state |
