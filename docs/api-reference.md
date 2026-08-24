@@ -1,6 +1,6 @@
 # Azure Standard API Reference — Confirmed Findings
 
-> **Last verified:** August 2025 against live API with personId=1674720, dropId=2873
+> **Last verified:** August 2025 against live API
 >
 > All entries marked ✓ have been validated with a real authenticated session.
 
@@ -31,7 +31,7 @@ Content-Type: application/json
 
 **Session response shape:**
 ```json
-{ "personId": 1674720, "person": 1674720, ... }
+{ "personId": 1000000, "person": 1000000, ... }
 ```
 > ⚠️ `"person"` is an **integer** (same as `personId`), NOT a nested object.
 
@@ -47,7 +47,6 @@ GET /drops?limit=200&start=0
 
 > ⚠️ `GET /drops/{id}` returns **404** — single-drop lookup does not work.
 > Must scan the paginated list. Default limit is 25. Max limit is 250.
-> Drop 2873 ("Waxahachie") is at offset ~140 in the full list.
 
 **Pagination:**
 - `limit` — max items per page (max 250)
@@ -56,13 +55,13 @@ GET /drops?limit=200&start=0
 **Drop shape:**
 ```json
 {
-  "id": 2873,
-  "name": "Waxahachie",
+  "id": 1234,
+  "name": "Example Drop",
   "geo": {...},
   "active": true,
   "order-frequency": [
-    { "cutoff": "2025-09-03", "orders": 38, "homeDeliveryOrders": [] },
-    { "cutoff": "2025-10-01", "orders": 37, "homeDeliveryOrders": [] }
+    { "cutoff": "2025-09-03", "orders": 12, "homeDeliveryOrders": [] },
+    { "cutoff": "2025-10-01", "orders": 11, "homeDeliveryOrders": [] }
   ],
   "order-minimum": ...,
   "address": {...},
@@ -84,7 +83,7 @@ GET /session
 
 **Response:**
 ```json
-{ "personId": 1674720, "person": 1674720 }
+{ "personId": 1000000, "person": 1000000 }
 ```
 
 ---
@@ -99,9 +98,9 @@ GET /drop-memberships?filter-person={personId}
 ```json
 [
   {
-    "id": 775396,
-    "customer": 1674720,
-    "drop": 2873,
+    "id": 100000,
+    "customer": 1000000,
+    "drop": 1234,
     "active": true,
     "heavy": false,
     "notifications": { "cutoff": ["email", "sms"] },
@@ -131,21 +130,21 @@ GET /orders?filter-person={personId}&limit=100
 **Order shape:**
 ```json
 {
-  "id": 17393000,
-  "customerId": 1674720,
+  "id": 10000000,
+  "customerId": 1000000,
   "status": "open",
-  "drop": 2873,
-  "trip": 65576,
+  "drop": 1234,
+  "trip": 10000,
   "placed": null,
   "shipped": null,
   "lastApiUpdate": "2026-08-15T15:12:23.037039",
   "checkout-payment": {
     "paid": false,
     "type": "ACH",
-    "nickname": "USAA Checking",
-    "payment-method": 3469673
+    "nickname": "Checking",
+    "payment-method": 12345
   },
-  "customer": 1674720
+  "customer": 1000000
 }
 ```
 
@@ -171,10 +170,10 @@ GET /person/{personId}/ordered-packaged-products
 ```json
 {
   "code": "BK603",
-  "productId": 28776,
+  "productId": 10000,
   "orderCount": 1,
   "lastOrderInvoiceDate": "2025-04-18",
-  "lastOrderId": 13624820
+  "lastOrderId": 10000000
 }
 ```
 
@@ -194,11 +193,11 @@ GET /account-entries?filter-person={personId}&balance=true&limit=1&start=-1
 ```json
 [
   {
-    "id": 33045240,
-    "person": 1674720,
-    "amount": 308.66,
+    "id": 10000000,
+    "person": 1000000,
+    "amount": 100.00,
     "date": "2026-07-25",
-    "notes": "ACH Account: (USAA Checking)",
+    "notes": "ACH Account: (Checking)",
     "balance": 0.0
   }
 ]
@@ -218,7 +217,6 @@ GET /v2/products/product_lists?customerNumber={personId}
 ```
 
 Returns up to N lists, each with at minimum `id` and `name`.
-Confirmed to return 11 lists for personId=1674720.
 
 **List items:**
 ```http
