@@ -6,14 +6,16 @@
 custom_components/azure_standard/
 ├── __init__.py               # async_setup_entry / async_unload_entry
 ├── manifest.json             # domain, version, HA version requirement
-├── config_flow.py            # all config + options flow steps
+├── config_flow.py            # all config + options flow steps (incl. options/product mgmt)
 ├── const.py                  # constants, URLs, default values
 ├── api.py                    # AzureStandardApiClient (aiohttp, cookie auth)
 ├── coordinator.py            # DataUpdateCoordinator subclass
 ├── discovery.py              # ProductDiscoveryEngine + ProductStats
-├── sensor.py                 # all sensor entities
+├── sensor.py                 # all sensor entities (static + dynamic product/list sensors)
 ├── binary_sensor.py          # order window + on-sale binary sensors
 ├── entity.py                 # AzureStandardEntity base class
+├── icon.png                  # 256×256 integration icon (HA integrations list)
+├── icon@2x.png               # 512×512 HiDPI icon
 ├── strings.json              # translatable UI strings
 └── translations/
     └── en.json
@@ -192,24 +194,25 @@ async_step_init
 - `DaysUntilCutoffSensor`
 - `DropNameSensor`
 - `DeliveryDateSensor`
-- `ActiveOrderStatusSensor`
-- `ActiveOrderItemCountSensor`
-- `ActiveOrderTotalSensor`
-- `LastOrderDateSensor`
-- `AccountCreditSensor`
-- `PendingPaymentSensor`
+- `ActiveOrderStatusSensor` *(account mode)*
+- `ActiveOrderItemCountSensor` *(account mode)*
+- `ActiveOrderTotalSensor` *(account mode)*
+- `LastOrderDateSensor` *(account mode)*
+- `AccountCreditSensor` *(account mode)* — reads `coordinator.data.account_credit`; `device_class=MONETARY`
+- `PendingPaymentSensor` *(account mode)* — currently `unavailable`; no API endpoint exposes open-order totals
 
-**Dynamic sensors** (one set per list):
-- `ShoppingListCountSensor` — unique_id includes `list_uid`
+**Dynamic sensors** (one set per shopping list, account mode):
+- `ShoppingListSensor` — unique_id includes `list_uid`; state = item count
 
-**Dynamic sensors** (one set per tracked product):
+**Dynamic sensors** (one set per tracked product, account mode):
 - `ProductLastOrderedSensor`
 - `ProductTimesOrderedSensor`
-- `ProductAvgIntervalSensor`
-- `ProductDaysUntilReorderSensor`
-- `ProductCurrentPriceSensor`
+- `ProductDaysSinceSensor`
+- `ProductReorderDueSensor`
 
 All extend `AzureStandardEntity` which extends `CoordinatorEntity`.
+Product sensors additionally extend `_ProductSensorBase` which uses a separate `DeviceInfo`
+per packaging code, so each tracked product appears as its own device in HA.
 
 ---
 
@@ -218,7 +221,7 @@ All extend `AzureStandardEntity` which extends `CoordinatorEntity`.
 **Static:**
 - `OrderWindowOpenBinarySensor` — `is_on` when `now() < next_cutoff`
 
-**Dynamic (one per tracked product):**
+**Dynamic (one per tracked product, account mode):**
 - `ProductOnSaleBinarySensor` — `is_on` when `product_stats[code].is_on_sale`
   Extra state attributes: `current_price`, `average_price`, `discount_percent`, `price_history`
 
@@ -318,8 +321,26 @@ Price snapshots are appended on every 6-hour coordinator update and pruned to th
    a. api.get_drop(drop_id) → next_cutoff, delivery_date computed
    b. api.get_ordered_products() → ProductDiscoveryEngine.analyze()
    c. Suggestions with count >= 3 → HA persistent notification raised
-   d. Static entities registered and available
+   d. Static entities registered and available (incl. AccountCreditSensor)
+   e. api.get_account_entries() → account_credit populated
 8. User opens options → async_step_products → checks boxes
 9. Coordinator update → newly_confirmed_products populated
 10. async_add_entities called for product sensor groups → live in HA
 ```
+
+---
+
+## Phase History
+
+| Phase | Description |
+|---|---|
+| 1 | Scaffold: manifest, const, __init__, entity, api, strings |
+| 2 | Drop & cutoff sensors: NextCutoff, DaysUntilCutoff, DropName, DeliveryDate |
+| 3 | Account login: config flow (mode select, manual, account, drop_confirm, reauth) |
+| 4 | Order sensors: ActiveOrderStatus, ActiveOrderItemCount, ActiveOrderTotal, LastOrderDate |
+| 5 | Shopping list sensors: ShoppingListSensor (dynamic, one per list) |
+| 6 | Product discovery engine: discovery.py, ProductStats, HA persistent notification |
+| 7 | Per-product sensor groups: last_ordered, times_ordered, days_since, reorder_due |
+| 8 | Options flow product management: checkbox UI, dynamic entity creation via callback registry |
+| 9 | Account sensors: AccountCreditSensor + PendingPaymentSensor; icons added |
+| 10 | Polish: README, hacs.json, architecture update, translations audit |

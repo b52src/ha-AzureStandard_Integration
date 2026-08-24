@@ -1,59 +1,152 @@
-# Azure Standard — Home Assistant Integration
+# Azure Standard Integration for Home Assistant
 
-A custom Home Assistant integration for [Azure Standard](https://www.azurestandard.com), a natural/organic food co-op delivery service. Monitor your drop location cutoff dates, active orders, shopping lists, and order history directly from Home Assistant.
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![Version](https://img.shields.io/badge/version-0.0.4-blue.svg)](https://forgejo.crow-nest.xyz/scrow/AzureStandard_Intigration/releases)
+[![HA Version](https://img.shields.io/badge/HA-2024.1%2B-brightgreen.svg)](https://www.home-assistant.io/)
 
-## Status
+Monitor your [Azure Standard](https://www.azurestandard.com/) organic food co-op drop from Home Assistant.
 
-> ⚠️ **Pre-development** — This repository is in the planning and documentation phase. No working integration exists yet.
+Track cutoff dates, active orders, shopping lists, account credit, and get smart reorder suggestions for your most-ordered products.
 
-## What This Does
+---
 
-- **Drop & Cutoff Sensors** — tracks your pickup drop location and shows days until the next order cutoff date
-- **Order Window Binary Sensor** — ON when an order cycle is open, OFF after cutoff passes
-- **Active Order Sensors** — item count, dollar total, and status of your current open order
-- **Shopping List Sensors** — dynamically-created item count sensors for each of your saved Azure Standard shopping lists
-- **Smart Product Discovery** — analyzes your purchase history, identifies frequently ordered products, and proposes creating dedicated sensors for them
-- **Per-Product Sensors** — last ordered date, times ordered, average order interval, days until suggested reorder, current price, on-sale alert
-- **On-Sale Binary Sensors** — alerts when a tracked product's price drops significantly below its rolling average
-- **Account Credit** — current Azure Cash / credit balance
+## Features
 
-## Setup Modes
+- **Drop & cutoff sensors** — next cutoff date, days remaining, delivery date, drop name
+- **Order sensors** — active order status, item count, total, last order date
+- **Shopping list sensors** — one sensor per list showing item count (updates every 30 min)
+- **Account credit sensor** — current account balance in USD
+- **Product tracking sensors** — per-product group: last ordered, times ordered, days since last order, reorder due
+- **Order window binary sensor** — `on` while the drop is still accepting orders
+- **Product on-sale binary sensor** — detects price drops vs 90-day average for each tracked product
+- **Smart product discovery** — automatically suggests products you order regularly (≥ 3 times) via HA persistent notifications
 
-### Mode A: Manual (No Login Required)
-Enter your drop's numeric ID. Get drop/cutoff sensors only. No Azure Standard credentials stored.
+---
 
-### Mode B: Account Login (Full Access)
-Login with your Azure Standard email and password. Drop auto-detected from your account. Unlocks all sensors including order history, shopping lists, and smart product discovery.
+## Requirements
 
-## Repository Structure
+- Home Assistant 2024.1 or newer
+- An Azure Standard account (for order/list/credit sensors) **or** just your Drop ID (for public drop/cutoff sensors only)
 
-```
-AzureStandard_Intigration/
-├── docs/
-│   ├── proposal.md          # Full integration proposal (v0.2)
-│   ├── architecture.md      # Developer architecture reference
-│   ├── api-reference.md     # Discovered API endpoints and data shapes
-│   └── api-findings.md      # Raw API research notes
-├── custom_components/
-│   └── azure_standard/      # Integration source (to be built)
-└── README.md
-```
+---
 
-## Documents
+## Installation
 
-- [Integration Proposal](docs/proposal.md) — goals, entities, discovery engine, build plan
-- [Architecture Reference](docs/architecture.md) — file map, class interfaces, data models, sequences
-- [API Reference](docs/api-reference.md) — all confirmed endpoints with request/response shapes
-- [API Research Notes](docs/api-findings.md) — raw reverse-engineering notes, live response samples
+### HACS (recommended)
 
-## Key Technical Facts
+1. In Home Assistant, go to **HACS → Integrations → ⋮ → Custom repositories**
+2. Add `https://forgejo.crow-nest.xyz/scrow/AzureStandard_Intigration` as type **Integration**
+3. Search for **Azure Standard** and install
+4. Restart Home Assistant
 
-- **API Base URL:** `https://api.azurestandard.com`
-- **Auth:** Cookie-based (`POST /login` → session cookie `id`)
-- **Public endpoints:** Drop locations, cutoff dates, product catalogue, prices — no auth needed
-- **Auth-required:** Orders, shopping lists, ordered products, account info
-- **No official API docs** — API reverse-engineered from JavaScript source bundles
+### Manual
 
-## License
+1. Copy `custom_components/azure_standard/` from this repo into your HA `config/custom_components/` directory
+2. Restart Home Assistant
 
-MIT
+---
+
+## Configuration
+
+Go to **Settings → Devices & Services → Add Integration** and search for **Azure Standard**.
+
+### Manual mode
+
+Requires only your **Drop ID** — no account needed. Find your Drop ID at [api.azurestandard.com/drops](https://api.azurestandard.com/drops) by matching your drop name and location.
+
+Provides: drop name, next cutoff date, days until cutoff, delivery date, order window binary sensor.
+
+### Account login mode
+
+Requires your Azure Standard email and password. Your password is used once to obtain a session token — it is not stored.
+
+Provides: everything in manual mode, plus active order sensors, shopping list sensors, account credit, and smart product tracking.
+
+---
+
+## Sensors Reference
+
+### Drop & Cutoff (both modes)
+
+| Sensor | Description | Unit |
+|---|---|---|
+| Next cutoff | Date of the next order cutoff | date |
+| Days until cutoff | Days remaining until the cutoff | days |
+| Drop name | Name of your assigned drop location | — |
+| Delivery date | Expected delivery date for the next drop | date |
+
+### Order & Account (account mode only)
+
+| Sensor | Description | Unit |
+|---|---|---|
+| Active order status | Status of your current open order | — |
+| Active order items | Number of items in your active order | items |
+| Active order total | Total value of your active order | USD |
+| Last order date | Date of your most recent completed order | date |
+| Account credit | Your current Azure Standard account credit balance | USD |
+| Pending payment | Outstanding payment on open orders | USD |
+
+> **Note:** Pending payment currently shows `unavailable` — the Azure Standard API does not expose an open-order total endpoint at this time.
+
+### Shopping Lists (account mode only)
+
+One sensor per shopping list, named after the list (e.g. `{List Name} list`). State = item count.
+
+### Product Sensors (account mode, per tracked product)
+
+For each tracked product you select in the options flow:
+
+| Sensor | Description |
+|---|---|
+| `{Code} Last Ordered` | Date you last ordered this product |
+| `{Code} Times Ordered` | Total times ordered |
+| `{Code} Days Since Last Ordered` | Days since last order |
+| `{Code} Reorder Due` | Estimated days until you'll need to reorder (based on average interval) |
+
+### Binary Sensors
+
+| Sensor | Description |
+|---|---|
+| Order window open | `on` when the drop is currently accepting orders |
+| `{Code} On Sale` | `on` when current price is ≥ 5% below 90-day average |
+
+---
+
+## Product Tracking Setup
+
+After setting up with account login:
+
+1. Go to **Settings → Devices & Services → Azure Standard → Configure**
+2. The **Product tracking** options screen shows every product you've ordered at least 3 times
+3. Check the products you want to track
+4. Dedicated sensor groups are created live — no restart required
+
+To change the minimum order count threshold, adjust **Minimum order count to show as candidate** in the same options screen.
+
+When new products become eligible (after enough reorders), a **persistent notification** appears in HA suggesting you add them.
+
+---
+
+## Update Intervals
+
+| Data | Interval |
+|---|---|
+| Drop / cutoff info | Every 6 hours |
+| Active order | Every 1 hour |
+| Shopping lists | Every 30 minutes |
+| Order history / product stats | Every 24 hours |
+| Session validation | Every 12 hours |
+
+---
+
+## Known Limitations
+
+- **Pending payment** — Azure Standard's API does not expose open-order totals. The `Pending payment` sensor will show `unavailable` until this changes.
+- **Delivery date** — derived from the drop's scheduled delivery window; not guaranteed to match actual delivery.
+- **Product prices** — fetched per product on coordinator update; prices update on the 6-hour public data interval.
+
+---
+
+## Contributing
+
+Issues and PRs welcome at [forgejo.crow-nest.xyz/scrow/AzureStandard_Intigration](https://forgejo.crow-nest.xyz/scrow/AzureStandard_Intigration).
