@@ -41,5 +41,26 @@
     "abort": {
       "already_configured": "This Azure Standard account or drop is already configured."
     }
+  },
+  "entity": {
+    "sensor": {
+      "next_cutoff": {
+        "name": "Next cutoff"
+      },
+      "days_until_cutoff": {
+        "name": "Days until cutoff"
+      },
+      "drop_name": {
+        "name": "Drop name"
+      },
+      "delivery_date": {
+        "name": "Delivery date"
+      }
+    },
+    "binary_sensor": {
+      "order_window_open": {
+        "name": "Order window open"
+      }
+    }
   }
 }
