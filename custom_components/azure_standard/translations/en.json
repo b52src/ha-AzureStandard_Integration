@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Azure Standard — Setup",
+        "description": "Choose how to connect Azure Standard. **Manual** requires only your Drop ID (no account needed). **Account login** unlocks order history, shopping lists, and smart product sensors.",
+        "data": {
+          "mode": "Setup mode"
+        }
+      },
+      "manual": {
+        "title": "Manual mode — Enter Drop ID",
+        "description": "Find your Drop ID at https://api.azurestandard.com/drops by matching name/location.",
+        "data": {
+          "drop_id": "Drop ID",
+          "name": "Friendly name"
+        }
+      },
+      "account": {
+        "title": "Account login",
+        "description": "Enter your Azure Standard account credentials. Your password is used only once to obtain a session token.",
+        "data": {
+          "email": "Email address",
+          "password": "Password"
+        }
+      },
+      "drop_confirm": {
+        "title": "Confirm your drop location",
+        "description": "Detected drop: **{drop_name}** (ID: {drop_id}). You may override the Drop ID below if needed.",
+        "data": {
+          "drop_id": "Drop ID (leave blank to use detected)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password. Please check your credentials and try again.",
+      "invalid_drop_id": "The Drop ID could not be found. Please verify it at https://api.azurestandard.com/drops.",
+      "missing_drop_id": "A Drop ID is required. Please enter one manually.",
+      "cannot_connect": "Unable to reach the Azure Standard API. Check your network and try again."
+    },
+    "abort": {
+      "already_configured": "This Azure Standard account or drop is already configured."
+    }
+  }
+}
