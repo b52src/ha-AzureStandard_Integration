@@ -227,6 +227,10 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
         # Callbacks registered by each platform for live entity creation
         self._platform_callbacks: dict[Platform, Any] = {}
 
+        # Tracking sets for dynamic entity creation
+        self._known_list_ids: set[str] = set()
+        self._known_product_codes: set[str] = set()
+
         # Timestamps controlling account-data sub-intervals
         self._last_orders_fetch: datetime | None = None
         self._last_lists_fetch: datetime | None = None
@@ -410,6 +414,18 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
 
                 if new_suggestions:
                     _fire_suggestion_notification(self.hass, new_suggestions)
+
+                # Notify the sensor platform about any newly-tracked product codes
+                if Platform.SENSOR in self._platform_callbacks and tracked:
+                    new_codes = tracked - self._known_product_codes
+                    new_codes_with_stats = new_codes & result.product_stats.keys()
+                    if new_codes_with_stats:
+                        from .sensor import _make_product_sensors  # local import avoids cycle
+                        new_entities = []
+                        for code in new_codes_with_stats:
+                            new_entities.extend(_make_product_sensors(self, code))
+                        self._platform_callbacks[Platform.SENSOR](new_entities)
+                        self._known_product_codes |= new_codes_with_stats
 
             except (aiohttp.ClientError, UpdateFailed):
                 if self.data:

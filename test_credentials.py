@@ -224,6 +224,51 @@ async def main() -> None:
                 import traceback
                 traceback.print_exc()
 
+        # 11 — Product sensor state simulation (pure Python, no network)
+        print("\n[11] Product sensor state simulation (SW033) …", end=" ", flush=True)
+        try:
+            import importlib.util as _ilu2
+            import sys as _sys2
+            import os as _os2
+            from datetime import date as _date
+            _spec2 = _ilu2.spec_from_file_location(
+                "discovery2",
+                _os2.path.join(_os2.path.dirname(__file__), "custom_components", "azure_standard", "discovery.py"),
+            )
+            _mod2 = _ilu2.module_from_spec(_spec2)
+            _sys2.modules["discovery2"] = _mod2
+            _spec2.loader.exec_module(_mod2)
+            ProductStats = _mod2.ProductStats
+
+            fake = ProductStats(
+                code="SW033",
+                product_id=12345,
+                order_count=20,
+                last_ordered=_date(2026, 6, 19),
+                last_order_id=99001,
+                days_since_last_order=(_date.today() - _date(2026, 6, 19)).days,
+                is_candidate=True,
+            )
+
+            # Simulate each sensor's native_value logic directly
+            last_ordered_val = fake.last_ordered
+            times_ordered_val = fake.order_count
+            days_since_val = fake.days_since_last_order
+            reorder_due_val = "true" if (fake.days_since_last_order or 0) >= 30 else "false"
+
+            assert isinstance(last_ordered_val, _date), "last_ordered must be a date"
+            assert isinstance(times_ordered_val, int) and times_ordered_val > 0, "times_ordered must be positive int"
+            assert isinstance(days_since_val, int) and days_since_val >= 0, "days_since must be non-negative int"
+            assert reorder_due_val in ("true", "false"), "reorder_due must be 'true' or 'false'"
+
+            print(f"OK ✓")
+            print(f"    last_ordered={last_ordered_val}  times_ordered={times_ordered_val}"
+                  f"  days_since={days_since_val}  reorder_due={reorder_due_val}")
+        except Exception as exc:
+            print(f"FAILED — {exc}")
+            import traceback
+            traceback.print_exc()
+
     print("\nDone.")
 
 

@@ -4,6 +4,10 @@ from __future__ import annotations
 import logging
 import re
 from datetime import date
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .discovery import ProductStats
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -15,7 +19,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, MODE_ACCOUNT
+from .const import DOMAIN, MODE_ACCOUNT, CONF_TRACKED_PRODUCTS
 from .coordinator import AzureStandardCoordinator
 from .entity import AzureStandardEntity
 
@@ -47,7 +51,7 @@ async def async_setup_entry(
     coordinator.register_platform_callback(Platform.SENSOR, async_add_entities)
 
     # Static drop/cutoff sensors — always available (no auth required)
-    entities: list[AzureStandardEntity] = [
+    entities: list[AzureStandardEntity] = [  # type: ignore[assignment]
         NextCutoffSensor(coordinator),
         DaysUntilCutoffSensor(coordinator),
         DropNameSensor(coordinator),
@@ -81,6 +85,17 @@ async def async_setup_entry(
                 str(lst.get("id") or lst.get("uid") or "")
                 for lst in coordinator.data.product_lists
             }
+
+        # Product sensors — seeded from tracked products already in options
+        tracked = coordinator.entry.options.get(CONF_TRACKED_PRODUCTS, [])
+        if tracked and coordinator.data and coordinator.data.product_stats:
+            product_entities: list[AzureStandardEntity] = []
+            for code in tracked:
+                if code in coordinator.data.product_stats:
+                    product_entities.extend(_make_product_sensors(coordinator, code))
+            if product_entities:
+                entities.extend(product_entities)
+            coordinator._known_product_codes = set(tracked)
 
     async_add_entities(entities)
 
@@ -407,3 +422,109 @@ class ShoppingListSensor(AzureStandardEntity, SensorEntity):
             "items": items,
             "last_updated": lst.get("updatedAt") or lst.get("updated_at") or None,
         }
+
+
+# ---------------------------------------------------------------------------
+# Product sensor helpers
+# ---------------------------------------------------------------------------
+
+_REORDER_THRESHOLD_DAYS = 30  # default; phase 8 will add per-product config
+
+
+def _make_product_sensors(
+    coordinator: "AzureStandardCoordinator",
+    code: str,
+) -> list["AzureStandardEntity"]:
+    """Return the group of 4 sensors for a single tracked product code."""
+    return [
+        ProductLastOrderedSensor(coordinator, code),
+        ProductTimesOrderedSensor(coordinator, code),
+        ProductDaysSinceSensor(coordinator, code),
+        ProductReorderDueSensor(coordinator, code),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Per-product sensors (account mode, dynamically created)
+# ---------------------------------------------------------------------------
+
+
+class _ProductSensorBase(AzureStandardEntity, SensorEntity):
+    """Shared base for all per-product sensors.
+
+    Subclasses only need to set ``_metric`` (unique_id suffix / translation key)
+    and implement ``native_value``.
+    """
+
+    _metric: str = ""
+
+    def __init__(self, coordinator: AzureStandardCoordinator, code: str) -> None:
+        super().__init__(coordinator)
+        self._code = code
+        self._attr_unique_id = f"{DOMAIN}_{code.lower()}_{self._metric}"
+        self._attr_name = f"{code} {self._metric.replace('_', ' ').title()}"
+
+    def _stats(self) -> "ProductStats | None":
+        """Return the ProductStats for this code, or None if unavailable."""
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.product_stats.get(self._code)
+
+
+class ProductLastOrderedSensor(_ProductSensorBase):
+    """ISO date string of the most recent order for this product."""
+
+    _metric = "last_ordered"
+    _attr_device_class = SensorDeviceClass.DATE
+    _attr_icon = "mdi:calendar-check"
+
+    @property
+    def native_value(self) -> date | None:
+        """Return the last-ordered date, or None if unknown."""
+        stats = self._stats()
+        return stats.last_ordered if stats else None
+
+
+class ProductTimesOrderedSensor(_ProductSensorBase):
+    """Total number of times this product has been ordered."""
+
+    _metric = "times_ordered"
+    _attr_native_unit_of_measurement = "orders"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:counter"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the order count, or None if unknown."""
+        stats = self._stats()
+        return stats.order_count if stats else None
+
+
+class ProductDaysSinceSensor(_ProductSensorBase):
+    """Days elapsed since this product was last ordered."""
+
+    _metric = "days_since"
+    _attr_native_unit_of_measurement = "d"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:clock-outline"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return days since last order, or None if unknown."""
+        stats = self._stats()
+        return stats.days_since_last_order if stats else None
+
+
+class ProductReorderDueSensor(_ProductSensorBase):
+    """True when days since last order exceeds the reorder threshold."""
+
+    _metric = "reorder_due"
+    _attr_icon = "mdi:cart-arrow-down"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return 'true' / 'false', or None if data is unavailable."""
+        stats = self._stats()
+        if stats is None or stats.days_since_last_order is None:
+            return None
+        return "true" if stats.days_since_last_order >= _REORDER_THRESHOLD_DAYS else "false"
