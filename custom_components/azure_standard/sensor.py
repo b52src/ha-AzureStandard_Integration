@@ -58,7 +58,7 @@ async def async_setup_entry(
         DeliveryDateSensor(coordinator),
     ]
 
-    # Order sensors — account mode only
+    # Order and account sensors — account mode only
     if entry.data.get("mode") == MODE_ACCOUNT:
         entities.extend(
             [
@@ -66,6 +66,8 @@ async def async_setup_entry(
                 ActiveOrderItemCountSensor(coordinator),
                 ActiveOrderTotalSensor(coordinator),
                 LastOrderDateSensor(coordinator),
+                AccountCreditSensor(coordinator),
+                PendingPaymentSensor(coordinator),
             ]
         )
 
@@ -338,6 +340,59 @@ class LastOrderDateSensor(AzureStandardEntity, SensorEntity):
             return date.fromisoformat(str(raw)[:10])
         except (ValueError, TypeError):
             return None
+
+
+# ---------------------------------------------------------------------------
+# Account sensors (account mode, static)
+# ---------------------------------------------------------------------------
+
+
+class AccountCreditSensor(AzureStandardEntity, SensorEntity):
+    """Current account credit balance (store credit held by Azure Standard)."""
+
+    _attr_translation_key = "account_credit"
+    _attr_native_unit_of_measurement = "USD"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:cash-plus"
+
+    def __init__(self, coordinator: AzureStandardCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_account_credit"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the account credit balance, or None if unavailable."""
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.account_credit
+
+
+class PendingPaymentSensor(AzureStandardEntity, SensorEntity):
+    """Amount of the pending (unpaid) open order, or None if unavailable.
+
+    The Azure Standard API does not currently expose an order total endpoint
+    for open orders; this sensor will return None until the endpoint is found.
+    The ``pending_payment`` field on the coordinator is wired and ready — it
+    only needs a fetch in coordinator.py once the endpoint is confirmed.
+    """
+
+    _attr_translation_key = "pending_payment"
+    _attr_native_unit_of_measurement = "USD"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:cash-clock"
+
+    def __init__(self, coordinator: AzureStandardCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_pending_payment"
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the pending payment amount, or None if unavailable."""
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.pending_payment
 
 
 # ---------------------------------------------------------------------------

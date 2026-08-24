@@ -23,6 +23,7 @@ from .const import (
     CONF_EMAIL,
     CONF_MIN_PURCHASE_COUNT,
     CONF_MODE,
+    CONF_PASSWORD,
     CONF_PERSON_ID,
     CONF_SESSION_COOKIE,
     CONF_TRACKED_PRODUCTS,
@@ -191,12 +192,84 @@ class AzureStandardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._mode: str | None = None
         # Preserved across account-path steps
         self._email: str = ""
+        self._password: str = ""
         self._session_cookie: str = ""
         self._person_id: int | None = None
         self._detected_drop_id: int | None = None
         self._detected_drop_name: str = ""
         # Dedicated aiohttp session for the config flow (carries the cookie jar)
         self._http_session: aiohttp.ClientSession | None = None
+
+    # ------------------------------------------------------------------
+    # Re-authentication flow (triggered by ConfigEntryAuthFailed)
+    # ------------------------------------------------------------------
+
+    async def async_step_reauth(
+        self, user_input: dict | None = None
+    ) -> FlowResult:
+        """Initiate re-authentication after a session expiry."""
+        # Seed the email from the existing config entry so it is pre-filled
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        if entry:
+            self._email = entry.data.get(CONF_EMAIL, "")
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict | None = None
+    ) -> FlowResult:
+        """Show re-auth form (email pre-filled, password required)."""
+        from .api import AzureStandardApiClient
+
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            if self._http_session is None:
+                self._http_session = async_create_clientsession(self.hass)
+
+            client = AzureStandardApiClient(self._http_session)
+
+            try:
+                success = await client.login(
+                    user_input[CONF_EMAIL], user_input["password"]
+                )
+            except aiohttp.ClientError:
+                errors["base"] = "cannot_connect"
+            else:
+                if not success:
+                    errors["base"] = "invalid_auth"
+                else:
+                    new_cookie = client.extract_cookie()
+                    person_id, _, _ = await _detect_drop_from_session(client)
+
+                    # Update entry.data with fresh cookie, password, and person_id
+                    entry = self.hass.config_entries.async_get_entry(
+                        self.context["entry_id"]
+                    )
+                    if entry:
+                        new_data = {
+                            **entry.data,
+                            CONF_EMAIL: user_input[CONF_EMAIL],
+                            CONF_PASSWORD: user_input["password"],
+                            CONF_SESSION_COOKIE: new_cookie,
+                        }
+                        if person_id:
+                            new_data[CONF_PERSON_ID] = person_id
+                        self.hass.config_entries.async_update_entry(
+                            entry, data=new_data
+                        )
+                    return self.async_abort(reason="reauth_successful")
+
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_EMAIL, default=self._email): str,
+                vol.Required("password"): str,
+            }
+        )
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=schema,
+            errors=errors,
+        )
 
     # ------------------------------------------------------------------
     # Mode selection
@@ -286,6 +359,7 @@ class AzureStandardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             else:
                 self._email = user_input[CONF_EMAIL]
+                self._password = user_input["password"]
 
                 # Extract person ID and drop from session
                 person_id, drop_id, drop_name = await _detect_drop_from_session(client)
@@ -340,6 +414,7 @@ class AzureStandardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_MODE: MODE_ACCOUNT,
                         CONF_EMAIL: self._email,
+                        CONF_PASSWORD: self._password,
                         CONF_DROP_ID: drop_id,
                         CONF_PERSON_ID: self._person_id,
                         CONF_SESSION_COOKIE: self._session_cookie,

@@ -42,6 +42,14 @@
         "data": {
           "drop_id": "Drop ID (leave blank to use detected)"
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Azure Standard",
+        "description": "Your session has expired. Please enter your password to reconnect.",
+        "data": {
+          "email": "Email address",
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -80,6 +88,12 @@
       },
       "last_order_date": {
         "name": "Last order date"
+      },
+      "account_credit": {
+        "name": "Account credit"
+      },
+      "pending_payment": {
+        "name": "Pending payment"
       }
     },
     "binary_sensor": {

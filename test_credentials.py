@@ -269,6 +269,26 @@ async def main() -> None:
             import traceback
             traceback.print_exc()
 
+        # 12 — Account credit balance field verification
+        print("\n[12] Account credit balance field …", end=" ", flush=True)
+        try:
+            entries = await get(
+                f"{API_BASE}/account-entries",
+                params={"filter-person": person_id, "balance": "true", "limit": 1, "start": -1},
+            )
+            assert isinstance(entries, list) and len(entries) > 0, "Expected at least one entry"
+            entry = entries[0]
+            assert "balance" in entry, f"'balance' field missing from entry: {list(entry.keys())}"
+            balance = entry["balance"]
+            assert balance is not None, "'balance' is None"
+            float(balance)  # must be numeric
+            print(f"OK ✓  balance={balance}")
+            print(f"    Raw: {json.dumps(entry)}")
+        except Exception as exc:
+            print(f"FAILED — {exc}")
+            import traceback
+            traceback.print_exc()
+
     print("\nDone.")
 
 

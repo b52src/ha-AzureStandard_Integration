@@ -21,6 +21,7 @@ from .const import (
     CONF_EMAIL,
     CONF_MIN_PURCHASE_COUNT,
     CONF_MODE,
+    CONF_PASSWORD,
     CONF_PERSON_ID,
     CONF_SESSION_COOKIE,
     CONF_TRACKED_PRODUCTS,
@@ -260,22 +261,50 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
     async def _reauth(self) -> None:
         """Attempt to re-authenticate using stored credentials.
 
-        Raises :class:`ConfigEntryAuthFailed` if re-login is not possible
-        (e.g., no stored email — user must reconfigure via the HA UI).
+        If a password is stored in entry.data, performs a silent re-login and
+        updates the session cookie without any user interaction.
+
+        Raises :class:`ConfigEntryAuthFailed` only when no password is stored
+        (e.g. entries created before this version), which prompts the HA repair
+        UI to ask the user to re-enter credentials via the reauth flow.
         """
         email = self.entry.data.get(CONF_EMAIL)
-        if not email:
-            raise ConfigEntryAuthFailed("No stored credentials — please reconfigure.")
+        password = self.entry.data.get(CONF_PASSWORD)
 
-        # We can't re-use a stored plaintext password (by design). Raise
-        # ConfigEntryAuthFailed so HA prompts the user via the repair UI.
-        _LOGGER.warning(
-            "Azure Standard session expired for %s — reauthentication required.",
+        if not email or not password:
+            _LOGGER.warning(
+                "Azure Standard session expired for %s — no stored password, "
+                "reauthentication required via the UI.",
+                email,
+            )
+            raise ConfigEntryAuthFailed(
+                f"Session expired for {email}. Please reconfigure the integration."
+            )
+
+        _LOGGER.info(
+            "Azure Standard session expired for %s — attempting silent re-login.",
             email,
         )
-        raise ConfigEntryAuthFailed(
-            f"Session expired for {email}. Please reconfigure the integration."
+        try:
+            success = await self.client.login(email, password)
+        except aiohttp.ClientError as err:
+            raise ConfigEntryAuthFailed(
+                f"Could not reach Azure Standard API during re-login: {err}"
+            ) from err
+
+        if not success:
+            raise ConfigEntryAuthFailed(
+                f"Re-login failed for {email} — password may have changed. "
+                "Please reconfigure the integration."
+            )
+
+        # Persist the fresh session cookie so it survives an HA restart
+        new_cookie = self.client.extract_cookie()
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            data={**self.entry.data, CONF_SESSION_COOKIE: new_cookie},
         )
+        _LOGGER.info("Azure Standard re-login successful for %s.", email)
 
     async def _authenticated_get(self, coro_factory) -> Any:
         """Execute *coro_factory()* and retry once after re-auth on 401/403.
