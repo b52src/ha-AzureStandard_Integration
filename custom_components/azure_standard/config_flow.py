@@ -13,6 +13,7 @@ from .const import (
     CONF_DROP_ID,
     CONF_EMAIL,
     CONF_MODE,
+    CONF_PERSON_ID,
     CONF_SESSION_COOKIE,
     DOMAIN,
     MODE_ACCOUNT,
@@ -48,15 +49,18 @@ async def _validate_drop_id(
     drop_id: int,
     client: "AzureStandardApiClient | None" = None,
 ) -> bool:
-    """Return True if *drop_id* resolves to a valid drop via the public API."""
+    """Return True if *drop_id* resolves to a valid drop via the public API.
+
+    Uses the paginated GET /drops list since GET /drops/{id} returns 404.
+    """
     from .api import AzureStandardApiClient
 
     if client is None:
         session = async_create_clientsession(hass)
         client = AzureStandardApiClient(session)
     try:
-        drop = await client.get_drop(drop_id)
-        return bool(drop)
+        drop = await client.get_drop_from_list(drop_id)
+        return drop is not None
     except (aiohttp.ClientError, KeyError, ValueError):
         return False
 
@@ -76,6 +80,7 @@ class AzureStandardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Preserved across account-path steps
         self._email: str = ""
         self._session_cookie: str = ""
+        self._person_id: int | None = None
         self._detected_drop_id: int | None = None
         self._detected_drop_name: str = ""
         # Dedicated aiohttp session for the config flow (carries the cookie jar)
@@ -170,8 +175,9 @@ class AzureStandardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 self._email = user_input[CONF_EMAIL]
 
-                # Extract drop assignment from session → person
-                drop_id, drop_name = await _detect_drop_from_session(client)
+                # Extract person ID and drop from session
+                person_id, drop_id, drop_name = await _detect_drop_from_session(client)
+                self._person_id = person_id
                 self._detected_drop_id = drop_id
                 self._detected_drop_name = drop_name
 
@@ -223,6 +229,7 @@ class AzureStandardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_MODE: MODE_ACCOUNT,
                         CONF_EMAIL: self._email,
                         CONF_DROP_ID: drop_id,
+                        CONF_PERSON_ID: self._person_id,
                         CONF_SESSION_COOKIE: self._session_cookie,
                     },
                 )
@@ -242,41 +249,44 @@ class AzureStandardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 async def _detect_drop_from_session(
     client: "AzureStandardApiClient",
-) -> tuple[int | None, str]:
-    """Return ``(drop_id, drop_name)`` by chaining ``/session`` → ``/person/{id}``.
+) -> tuple[int | None, int | None, str]:
+    """Return ``(person_id, drop_id, drop_name)`` using confirmed API paths.
 
-    If either call fails the tuple ``(None, "")`` is returned so the flow can
-    still proceed to the override step.
+    Step 1: GET /session  → personId  (integer, NOT a nested dict)
+    Step 2: GET /drop-memberships?filter-person={personId}  → drop ID
+    Step 3: GET /drops list, find the drop by ID → drop name
+
+    Returns ``(None, None, "")`` on any failure so the flow still proceeds to
+    the manual-override step.
     """
+    # Step 1 — get personId from session
     try:
         session_data = await client.get_session()
     except aiohttp.ClientError:
-        return None, ""
+        return None, None, ""
 
-    # Person ID is typically at session.person.id or session.personId
-    person_id: int | None = None
-    person_payload = session_data.get("person") or {}
-    person_id = person_payload.get("id") or session_data.get("personId")
-
-    if not person_id:
-        return None, ""
-
+    # Confirmed shape: {"personId": 1674720, "person": 1674720, ...}
+    # "person" is an integer, NOT a nested dict
+    raw_person = session_data.get("personId") or session_data.get("person")
+    if not raw_person:
+        return None, None, ""
     try:
-        person_data = await client.get_person(int(person_id))
-    except (aiohttp.ClientError, ValueError):
-        return None, ""
+        person_id = int(raw_person)
+    except (TypeError, ValueError):
+        return None, None, ""
 
-    # Drop assignment may live at several key names depending on API version
-    drop_id: int | None = (
-        person_data.get("dropId")
-        or person_data.get("drop-id")
-        or person_data.get("defaultDropId")
-    )
-    drop_name: str = str(
-        person_data.get("dropName")
-        or person_data.get("drop-name")
-        or person_data.get("defaultDropName")
-        or ""
-    )
+    # Step 2 — get drop ID from drop-memberships
+    drop_id: int | None = await client.get_drop_id_for_person(person_id)
+    if not drop_id:
+        return person_id, None, ""
 
-    return (int(drop_id) if drop_id else None), drop_name
+    # Step 3 — look up the drop name from the public list
+    drop_name = ""
+    try:
+        drop_data = await client.get_drop_from_list(drop_id)
+        if drop_data:
+            drop_name = str(drop_data.get("name") or drop_data.get("dropName") or "")
+    except aiohttp.ClientError:
+        pass
+
+    return person_id, drop_id, drop_name

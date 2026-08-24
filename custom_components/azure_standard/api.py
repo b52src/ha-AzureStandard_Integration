@@ -92,13 +92,63 @@ class AzureStandardApiClient:
     # Public endpoints (no auth required)
     # ------------------------------------------------------------------
 
-    async def get_drops(self) -> list[dict]:
-        """Return all drop locations with their cutoff schedules."""
-        return await self._get("/drops")
+    async def get_drop_id_for_person(self, person_id: int) -> int | None:
+        """Return the drop ID for a person via the drop-memberships endpoint.
 
-    async def get_drop(self, drop_id: int) -> dict:
-        """Return a single drop by ID with its full cutoff schedule."""
-        return await self._get(f"/drops/{drop_id}")
+        Confirmed endpoint: GET /drop-memberships?filter-person={personId}
+        Response shape: [{"drop": 2873, "customer": 1674720, "active": true}]
+        Returns None if the person has no active membership.
+        """
+        try:
+            data = await self._get(
+                "/drop-memberships", params={"filter-person": person_id}
+            )
+            # API returns a list of membership dicts
+            if isinstance(data, list):
+                for entry in data:
+                    if entry.get("active"):
+                        return int(entry["drop"])
+                if data:
+                    return int(data[0]["drop"])
+            elif isinstance(data, dict):
+                return int(data["drop"])
+        except (aiohttp.ClientError, KeyError, TypeError, ValueError):
+            _LOGGER.debug("Could not fetch drop membership for person %d", person_id)
+        return None
+
+    async def get_drop_from_list(self, drop_id: int) -> dict | None:
+        """Find a single drop by scanning paginated GET /drops.
+
+        GET /drops/{id} returns 404.  The list endpoint paginates with a
+        maximum of 250 per page; we page through until we find the drop or
+        exhaust the results.
+
+        Confirmed drop shape keys include: id, name, geo, order-frequency,
+        active, address.
+        order-frequency item shape: {"cutoff": "YYYY-MM-DD", "orders": N, ...}
+        """
+        limit = 200
+        start = 0
+        while True:
+            try:
+                page: list[dict] = await self._get(
+                    "/drops", params={"limit": limit, "start": start}
+                )
+            except aiohttp.ClientError as err:
+                _LOGGER.debug("Could not fetch drops page start=%d: %s", start, err)
+                return None
+
+            if not isinstance(page, list) or not page:
+                return None
+
+            for d in page:
+                if isinstance(d, dict) and d.get("id") == drop_id:
+                    return d
+
+            if len(page) < limit:
+                # Last page — drop not found
+                return None
+            start += limit
 
     async def get_product(self, product_id: int) -> dict:
         """Return full detail for a single product."""
@@ -132,9 +182,14 @@ class AzureStandardApiClient:
     # ------------------------------------------------------------------
 
     async def login(self, email: str, password: str) -> bool:
-        """Authenticate and store the session cookie. Returns True on success."""
+        """Authenticate and store the session cookie. Returns True on success.
+
+        The Azure Standard API requires the field name ``username`` (not
+        ``email``) in the login payload — confirmed by inspecting the 400
+        error body: ``"JSON body missing value for username"``.
+        """
         try:
-            await self._post("/login", {"email": email, "password": password})
+            await self._post("/login", {"username": email, "password": password})
             return True
         except aiohttp.ClientResponseError as err:
             if err.status in (401, 403):
@@ -166,30 +221,82 @@ class AzureStandardApiClient:
         """Return profile data for a person, including default drop assignment."""
         return await self._get(f"/person/{person_id}")
 
-    async def get_ordered_products(self) -> list[dict]:
-        """Return all products ever ordered with purchase frequency metadata."""
-        return await self._get("/ordered-packaged-products")
+    async def get_ordered_products(self, person_id: int) -> list[dict]:
+        """Return all products ever ordered with purchase frequency metadata.
 
-    async def get_orders(self) -> list[dict]:
-        """Return the order list with status, cutoff date, and totals."""
-        return await self._get("/orders/orders")
+        Confirmed endpoint: GET /person/{personId}/ordered-packaged-products
+        Item shape: {code, productId, orderCount, lastOrderInvoiceDate, lastOrderId}
+        """
+        return await self._get(f"/person/{person_id}/ordered-packaged-products")
+
+    async def get_orders(self, person_id: int, limit: int = 100) -> list[dict]:
+        """Return the order list for a person.
+
+        Confirmed endpoint: GET /orders?filter-person={personId}&limit=N
+        Order shape: {id, customerId, status, drop, trip, placed, shipped,
+                      checkout-payment, lastApiUpdate}
+        Status values observed: "open", "delivered-to-drop"
+        """
+        return await self._get(
+            "/orders", params={"filter-person": person_id, "limit": limit}
+        )
 
     async def get_order(self, order_id: int) -> dict:
-        """Return a single order with all line items."""
+        """Return a single order with all line items.
+
+        Confirmed endpoint: GET /order/{id}
+        """
         return await self._get(f"/order/{order_id}")
 
-    async def get_product_lists(self) -> list[dict]:
-        """Return saved shopping lists with items and quantities."""
-        return await self._get("/products/product_lists")
+    async def get_product_lists(self, person_id: int) -> list[dict]:
+        """Return the saved shopping list metadata for a customer.
 
-    async def get_account_entries(self) -> list[dict]:
-        """Return credit balance, invoices, and payment records."""
-        return await self._get("/account-entries")
+        Confirmed endpoint: GET /v2/products/product_lists?customerNumber={personId}
+        Each list entry has at minimum: {id, name, ...}
+        Items are fetched separately via get_product_list_items().
+        """
+        try:
+            return await self._get(
+                "/v2/products/product_lists",
+                params={"customerNumber": person_id},
+            )
+        except aiohttp.ClientResponseError as err:
+            if err.status == 404:
+                _LOGGER.debug(
+                    "Shopping list endpoint returned 404; returning empty list."
+                )
+                return []
+            raise
 
-    async def get_spend_metrics(self) -> dict:
+    async def get_product_list_items(self, list_id: int) -> list[dict]:
+        """Return items for a single shopping list.
+
+        Confirmed endpoint: GET /v2/products/product_lists/{listId}/items
+        Item shape: {id, productList, quantity, isPinned, pieceMetaId, slug,
+                     image, name, directReplacement, createdAt, productCode}
+        """
+        return await self._get(f"/v2/products/product_lists/{list_id}/items")
+
+    async def get_account_balance(self, person_id: int) -> list[dict]:
+        """Return the latest account entry including running balance.
+
+        Confirmed endpoint:
+          GET /account-entries?filter-person={personId}&balance=true&limit=1&start=-1
+        Response: [{id, person, amount, date, notes, balance}]
+        """
+        return await self._get(
+            "/account-entries",
+            params={
+                "filter-person": person_id,
+                "balance": "true",
+                "limit": 1,
+                "start": -1,
+            },
+        )
+
+    async def get_spend_metrics(self, person_id: int) -> dict:
         """Return total spend and order counts."""
-        return await self._get("/accounts_receivable/spend-metrics")
-
-    async def get_pending_payments(self) -> dict:
-        """Return outstanding payment state."""
-        return await self._get("/accounts_receivable/pending-payments-state")
+        return await self._get(
+            "/accounts_receivable/spend-metrics",
+            params={"filter-person": person_id},
+        )

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 
 from homeassistant.components.sensor import (
@@ -21,6 +22,19 @@ from .entity import AzureStandardEntity
 _LOGGER = logging.getLogger(__name__)
 
 
+def _list_slug(lst: dict) -> str:
+    """Return a stable slug for a shopping list dict.
+
+    Prefers the ``name`` field, cleaned to lowercase snake_case, so the sensor
+    entity ID is human-readable (e.g. ``sensor.azure_standard_list_staples_count``).
+    Falls back to the list's numeric/string id if the name is absent.
+    """
+    name = lst.get("name") or lst.get("listName") or lst.get("title") or ""
+    if name:
+        return re.sub(r"[^a-z0-9]+", "_", name.lower().strip()).strip("_")
+    return str(lst.get("id") or lst.get("uid") or "unknown")
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -29,7 +43,7 @@ async def async_setup_entry(
     """Set up Azure Standard sensor entities from a config entry."""
     coordinator: AzureStandardCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    # Register callback for live product sensor creation (used in later phases)
+    # Register callback for live sensor creation (shopping lists, product sensors)
     coordinator.register_platform_callback(Platform.SENSOR, async_add_entities)
 
     # Static drop/cutoff sensors — always available (no auth required)
@@ -50,6 +64,23 @@ async def async_setup_entry(
                 LastOrderDateSensor(coordinator),
             ]
         )
+
+        # Shopping list sensors — seeded from data already in the coordinator
+        # (coordinator polls lists on its own interval; here we only add the
+        # sensors for lists that are known at setup time so entities survive
+        # an HA restart without waiting for the next coordinator tick).
+        if coordinator.data and coordinator.data.product_lists:
+            list_entities = [
+                ShoppingListSensor(coordinator, lst)
+                for lst in coordinator.data.product_lists
+            ]
+            entities.extend(list_entities)
+            # Mark these lists as known so the coordinator's live-creation
+            # path does not create duplicates on the next poll.
+            coordinator._known_list_ids = {
+                str(lst.get("id") or lst.get("uid") or "")
+                for lst in coordinator.data.product_lists
+            }
 
     async_add_entities(entities)
 
@@ -292,3 +323,87 @@ class LastOrderDateSensor(AzureStandardEntity, SensorEntity):
             return date.fromisoformat(str(raw)[:10])
         except (ValueError, TypeError):
             return None
+
+
+# ---------------------------------------------------------------------------
+# Shopping list sensors (account mode, dynamically created)
+# ---------------------------------------------------------------------------
+
+
+class ShoppingListSensor(AzureStandardEntity, SensorEntity):
+    """Item count for a single Azure Standard saved shopping list.
+
+    One sensor is created per list.  The sensor's state is the total number
+    of items in the list; an ``items`` attribute surfaces the full item
+    array so dashboards and automations can inspect individual products.
+
+    The unique ID is derived from the list's server-side ID (not its name)
+    so that renaming the list in Azure Standard does not break the HA entity.
+    """
+
+    _attr_native_unit_of_measurement = "items"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:format-list-bulleted"
+
+    def __init__(
+        self, coordinator: AzureStandardCoordinator, list_data: dict
+    ) -> None:
+        super().__init__(coordinator)
+        self._list_id = str(list_data.get("id") or list_data.get("uid") or "")
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_list_{self._list_id}"
+        # Human-readable name shown in the UI: "Staples list", "Weekly list", …
+        slug = _list_slug(list_data)
+        self._attr_name = f"{slug.replace('_', ' ').title()} list"
+
+    def _current_list(self) -> dict | None:
+        """Return the matching list dict from the latest coordinator data."""
+        if not self.coordinator.data:
+            return None
+        for lst in self.coordinator.data.product_lists:
+            if str(lst.get("id") or lst.get("uid") or "") == self._list_id:
+                return lst
+        return None
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the number of items in the list."""
+        lst = self._current_list()
+        if lst is None:
+            return None
+        items = lst.get("items") or []
+        if isinstance(items, list):
+            return len(items)
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return list metadata and item details as extra attributes.
+
+        Item shape (confirmed from live API):
+          {id, productList, quantity, isPinned, pieceMetaId, slug,
+           image, name, directReplacement, createdAt, productCode}
+        """
+        lst = self._current_list()
+        if lst is None:
+            return {}
+        items_raw = lst.get("items") or []
+        # Normalise each item to {name, code, qty, slug} for easy automation use
+        items: list[dict] = []
+        if isinstance(items_raw, list):
+            for item in items_raw:
+                if isinstance(item, dict):
+                    items.append(
+                        {
+                            "name": item.get("name", ""),
+                            "code": item.get("productCode", ""),
+                            "qty": item.get("quantity", 1),
+                            "slug": item.get("slug", ""),
+                            "pinned": item.get("isPinned", False),
+                        }
+                    )
+        return {
+            "list_id": self._list_id,
+            "list_name": lst.get("name") or "",
+            "items": items,
+            "last_updated": lst.get("updatedAt") or lst.get("updated_at") or None,
+        }

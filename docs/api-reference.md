@@ -1,346 +1,256 @@
-# Azure Standard API Reference
+# Azure Standard API Reference — Confirmed Findings
 
-> **Unofficial / Reverse-Engineered API**  
-> Base URL: `https://api.azurestandard.com`  
-> All responses are JSON. No API key required for public endpoints.
+> **Last verified:** August 2025 against live API with personId=1674720, dropId=2873
+>
+> All entries marked ✓ have been validated with a real authenticated session.
 
 ---
 
-## Authentication
+## Base URLs
 
-### `POST /login`
+| Base | Used for |
+|---|---|
+| `https://api.azurestandard.com` | All v1 endpoints |
+| `https://api.azurestandard.com/v2` | Shopping list endpoints only |
 
-Authenticates a user and sets a session cookie.
+---
 
-**Request body:**
+## Authentication ✓
+
+```http
+POST https://api.azurestandard.com/login
+Content-Type: application/json
+
+{ "username": "you@example.com", "password": "..." }
+```
+
+> ⚠️ Field is **`username`**, NOT `email` — using `email` returns HTTP 400:
+> `"JSON body missing value for username"`
+
+**Response:** Sets cookie `id=<session_token>`; Domain=`.azurestandard.com`
+
+**Session response shape:**
+```json
+{ "personId": 1674720, "person": 1674720, ... }
+```
+> ⚠️ `"person"` is an **integer** (same as `personId`), NOT a nested object.
+
+---
+
+## Public Endpoints (no auth required)
+
+### Drop Locations ✓
+
+```http
+GET /drops?limit=200&start=0
+```
+
+> ⚠️ `GET /drops/{id}` returns **404** — single-drop lookup does not work.
+> Must scan the paginated list. Default limit is 25. Max limit is 250.
+> Drop 2873 ("Waxahachie") is at offset ~140 in the full list.
+
+**Pagination:**
+- `limit` — max items per page (max 250)
+- `start` — zero-based offset for pagination
+
+**Drop shape:**
 ```json
 {
-  "email": "user@example.com",
-  "password": "yourpassword"
+  "id": 2873,
+  "name": "Waxahachie",
+  "geo": {...},
+  "active": true,
+  "order-frequency": [
+    { "cutoff": "2025-09-03", "orders": 38, "homeDeliveryOrders": [] },
+    { "cutoff": "2025-10-01", "orders": 37, "homeDeliveryOrders": [] }
+  ],
+  "order-minimum": ...,
+  "address": {...},
+  "timezone": "America/Chicago"
 }
 ```
 
-**Response:** Sets `Set-Cookie: id=<token>; Domain=.azurestandard.com; Secure; HttpOnly`
-
-**Notes:**
-- The `id` cookie is the sole credential for all subsequent authenticated requests
-- Pass it automatically via `withCredentials: true` (browser) or `Cookie: id=<token>` header (server-side)
+> ⚠️ `order-frequency[].cutoff` is the only date field present — **no delivery date** in this response.
 
 ---
 
-### `GET /session`
+## Authenticated Endpoints
 
-Returns current session state. Use to verify a stored cookie is still valid.
+### Session ✓
 
-**Auth required:** No (returns limited info when unauthenticated)
-
-**Example unauthenticated response:**
-```json
-{
-  "hyvorSso": {
-    "userData": "e30=",
-    "hash": "25e58aa22c23106c2fb7d8f8d7fcb241569f41564857559065402110ebd981dc"
-  },
-  "expires": "2036-08-21T10:28:18.422049-07:00"
-}
+```http
+GET /session
 ```
 
-**Authenticated response includes:** `person.email`, `person.order-place-issue`, `person.is-drop-coordinator`, `person.homeDeliveryDriverDropIds`, `person.homeDeliveryDriverCreditsTotal`
+**Response:**
+```json
+{ "personId": 1674720, "person": 1674720 }
+```
 
 ---
 
-### `POST /logout`
+### Drop Membership ✓
 
-Invalidates the current session.
+```http
+GET /drop-memberships?filter-person={personId}
+```
 
----
-
-## Drop Locations & Cutoff Dates
-
-### `GET /drops`
-
-Returns all active drop locations with their upcoming order cutoff schedules.
-
-**Auth required:** No
-
-**Query parameters:**
-| Parameter | Type | Description |
-|---|---|---|
-| `limit` | integer | Max results per page (default: all) |
-
-**Response fields:**
-| Field | Type | Description |
-|---|---|---|
-| `id` | integer | Drop location ID |
-| `name` | string | Drop location name |
-| `geo.latitude` | float | Latitude |
-| `geo.longitude` | float | Longitude |
-| `active` | boolean | Whether drop is currently active |
-| `exclusivity` | string | `"open"` (anyone can join) or `"private"` |
-| `order-frequency` | array | List of upcoming order cycles |
-| `order-frequency[].cutoff` | string | ISO date string (`YYYY-MM-DD`) — order cutoff date |
-| `order-frequency[].orders` | integer | Number of orders for this cycle |
-| `order-frequency[].homeDeliveryOrders` | array | Home delivery sub-orders for this cycle |
-
-**Example response (truncated):**
+**Response (list):**
 ```json
 [
   {
-    "id": 109,
-    "name": "Dufur Market Drop",
-    "geo": {
-      "latitude": 45.453,
-      "longitude": -121.13
-    },
+    "id": 775396,
+    "customer": 1674720,
+    "drop": 2873,
     "active": true,
-    "exclusivity": "open",
-    "order-frequency": [
-      {
-        "orders": 24,
-        "homeDeliveryOrders": [],
-        "cutoff": "2025-08-25"
-      },
-      {
-        "orders": 22,
-        "homeDeliveryOrders": [],
-        "cutoff": "2025-09-01"
-      }
-    ]
+    "heavy": false,
+    "notifications": { "cutoff": ["email", "sms"] },
+    "created": "2021-11-02T07:20:30.768076-07:00"
   }
 ]
 ```
 
 ---
 
-### `GET /drops/{id}`
+### Person Profile ✓
 
-Returns a single drop location with full cutoff schedule.
+```http
+GET /person/{personId}
+```
 
-**Auth required:** No
-
-**Parameters:** `id` — numeric drop ID
+> ⚠️ Does **not** contain `dropId` — use `/drop-memberships` for the drop.
 
 ---
 
-## Products & Catalogue
+### Orders ✓
 
-### `GET /products`
+```http
+GET /orders?filter-person={personId}&limit=100
+```
 
-Returns product listings, filterable by category.
-
-**Auth required:** No
-
-**Query parameters:**
-| Parameter | Type | Description |
-|---|---|---|
-| `categoryId` | integer | Filter by category (e.g. `21706` for canned vegetables) |
-| `limit` | integer | Results per page |
-| `offset` | integer | Pagination offset |
-
-**Response fields per product:**
-| Field | Type | Description |
-|---|---|---|
-| `id` | integer | Product ID |
-| `name` | string | Product name |
-| `slug` | string | URL slug |
-| `isOrganic` | boolean | Organic certification |
-| `isGeneticallyModified` | string | GMO status string |
-| `storageClimate` | string | `"dry"`, `"refrigerated"`, `"frozen"` |
-| `isShippableUps` | boolean | Whether product can ship via UPS |
-| `treatAsActive` | boolean | Whether product is currently active/available |
-| `brand.name` | string | Brand name |
-| `countryOfOrigin` | string | Country of origin |
-| `packaging` | array | Array of available package sizes |
-| `packaging[].code` | string | Unique packaging code (e.g. `"TE815"`) |
-| `packaging[].size` | string | Human-readable size (e.g. `"4 oz"`) |
-| `packaging[].stock` | integer | Current stock level |
-| `packaging[].price.retail.dollars` | float | Retail price |
-| `packaging[].price.wholesale.dollars` | float | Wholesale/member price |
-| `packaging[].images` | array | Image URLs |
-| `packaging[].gtin13` | string | UPC/GTIN barcode |
-| `packaging[].favorites` | integer | Number of users who favorited |
-
-**Example response (single product):**
+**Order shape:**
 ```json
 {
-  "id": 35206,
-  "name": "Cranberry Orange Tea",
-  "slug": "cranberry-orange-tea",
-  "storageClimate": "dry",
-  "isShippableUps": true,
-  "isGeneticallyModified": "Not Genetically Modified",
-  "isOrganic": false,
-  "treatAsActive": false,
-  "packaging": [
-    {
-      "code": "TE815",
-      "size": "4 oz",
-      "stock": 78,
-      "price": {
-        "retail": {
-          "dollars": 13.99,
-          "discount": "15%",
-          "unit": "ounce",
-          "dollars-per-unit": 3.4975
-        },
-        "wholesale": {
-          "dollars": 11.45,
-          "unit": "ounce",
-          "dollars-per-unit": 2.8625
-        }
-      },
-      "gtin13": "0603765375729",
-      "favorites": 89
-    }
-  ],
-  "brand": {
-    "id": 2456,
-    "name": "Abby's Elderberry",
-    "slug": "abbys-elderberry",
-    "url": "https://abbyselderberry.com"
+  "id": 17393000,
+  "customerId": 1674720,
+  "status": "open",
+  "drop": 2873,
+  "trip": 65576,
+  "placed": null,
+  "shipped": null,
+  "lastApiUpdate": "2026-08-15T15:12:23.037039",
+  "checkout-payment": {
+    "paid": false,
+    "type": "ACH",
+    "nickname": "USAA Checking",
+    "payment-method": 3469673
   },
-  "countryOfOrigin": "United States of America"
+  "customer": 1674720
+}
+```
+
+> ⚠️ No `cutoffDate`, `total`, or `items` in the list response.
+> Confirmed status values: **`"open"`**, **`"delivered-to-drop"`**
+
+**Single order:**
+```http
+GET /order/{orderId}
+```
+
+---
+
+### Ordered Products (Purchase History) ✓
+
+```http
+GET /person/{personId}/ordered-packaged-products
+```
+
+> ⚠️ Path requires `personId`. The old `/ordered-packaged-products` (no person prefix) returns 404.
+
+**Item shape:**
+```json
+{
+  "code": "BK603",
+  "productId": 28776,
+  "orderCount": 1,
+  "lastOrderInvoiceDate": "2025-04-18",
+  "lastOrderId": 13624820
+}
+```
+
+> ⚠️ Fields from the proposal that do NOT exist:
+> `quantity-ordered`, `last-order-placed`, `first-order-placed`, `orderRecency`,
+> `packaging.next-purchase-arrival`, `packaging.vendorShortedLastPurchase`
+
+---
+
+### Account Balance ✓
+
+```http
+GET /account-entries?filter-person={personId}&balance=true&limit=1&start=-1
+```
+
+**Response:**
+```json
+[
+  {
+    "id": 33045240,
+    "person": 1674720,
+    "amount": 308.66,
+    "date": "2026-07-25",
+    "notes": "ACH Account: (USAA Checking)",
+    "balance": 0.0
+  }
+]
+```
+
+> Balance field is `"balance"` (not `"runningBalance"`).
+> With `start=-1` and `limit=1` the response is a single-element list;
+> the entry at index 0 is the most recent.
+
+---
+
+### Shopping Lists ✓
+
+**List metadata:**
+```http
+GET /v2/products/product_lists?customerNumber={personId}
+```
+
+Returns up to N lists, each with at minimum `id` and `name`.
+Confirmed to return 11 lists for personId=1674720.
+
+**List items:**
+```http
+GET /v2/products/product_lists/{listId}/items
+```
+
+**Item shape (confirmed):**
+```json
+{
+  "id": 5602519,
+  "productList": 135009,
+  "quantity": 1,
+  "isPinned": false,
+  "pieceMetaId": 16368,
+  "slug": "pasta-sauce-tomato-basil-organic",
+  "image": "https://media.azurestandard.com/files/...",
+  "name": "Natural Value Pasta Sauce, Tomato Basil, Organic - 24 oz",
+  "directReplacement": null,
+  "createdAt": "2026-08-13T19:52:20.173364",
+  "productCode": "GY991"
 }
 ```
 
 ---
 
-### `GET /products/{id}`
+## Unconfirmed / Broken Endpoints
 
-Returns full detail for a single product.
-
-**Auth required:** No
-
----
-
-## Account & Orders *(Auth Required)*
-
-### `GET /person/{id}`
-
-Returns account profile for the given person ID.
-
-**Auth required:** Yes  
-**Note:** Your account ID is in your Azure Standard account page URL.
-
-**Key response fields:**
-- Delivery addresses
-- Assigned drop location
-- Account flags (`order-place-issue`, `is-drop-coordinator`)
-
----
-
-### `GET /ordered-packaged-products`
-
-Returns all products the authenticated user has ever ordered, with order history metadata.
-
-**Auth required:** Yes
-
-**Key response fields:**
-| Field | Description |
-|---|---|
-| `packaging.code` | Packaging code |
-| `orderRecency` | Recency indicator |
-| `quantity-ordered` | Total quantity ordered historically |
-| `last-order-placed` | ISO date of most recent order containing this product |
-| `packaging.next-purchase-arrival` | Expected arrival date if re-ordered now |
-| `packaging.vendorShortedLastPurchase` | Whether vendor shorted the last purchase |
-
----
-
-### `GET /orders/orders`
-
-Returns the authenticated user's order history list.
-
-**Auth required:** Yes
-
-**Key response fields per order:**
-- Order ID, status
-- Cutoff date
-- Trip/delivery date
-- Order total
-- Line item count
-
----
-
-### `GET /order/{id}`
-
-Returns full detail for a single order including all line items.
-
-**Auth required:** Yes
-
----
-
-## Shopping Lists *(Auth Required)*
-
-### `GET /products/product_lists`
-
-Returns all saved shopping lists for the authenticated user.
-
-**Auth required:** Yes
-
-**Response:** Array of list objects, each containing:
-- `listUid` — unique list identifier
-- `name` — list name
-- `listItems` — array of product/packaging entries with quantities
-
----
-
-### `GET /products/shop_product_lists`
-
-Returns public/followed lists (community lists the user follows).
-
-**Auth required:** Yes
-
----
-
-## Account Financials *(Auth Required)*
-
-### `GET /account-entries`
-
-Returns account financial entries (credits, invoices, payments).
-
-**Auth required:** Yes
-
-**Query parameters:** `?` (check for pagination params)
-
----
-
-### `GET /accounts_receivable/spend-metrics`
-
-Returns spend summary metrics for the authenticated user.
-
-**Auth required:** Yes
-
----
-
-### `GET /accounts_receivable/pending-payments-state`
-
-Returns any outstanding/pending payment state.
-
-**Auth required:** Yes
-
----
-
-## Other Endpoints Found in Source
-
-| Endpoint | Notes |
-|---|---|
-| `GET /audit/product/{id}` | Product audit log |
-| `GET /audit/packaged-product/{code}` | Packaging audit log |
-| `GET /audit/products` | Products audit |
-| `GET /_data-dropsNotClosed.geojson` | GeoJSON of all non-closed drops (map data) |
-| `GET /_data-dropsClosed.geojson` | GeoJSON of closed drops |
-| `POST /password/reset` | Password reset |
-| `POST /password/confirm` | Password reset confirmation |
-
----
-
-## Category IDs
-
-Known category IDs discovered from the site URL structure:
-
-| Category | ID |
-|---|---|
-| Canned Vegetables | `21706` |
-
-> More category IDs can be discovered by browsing the Azure Standard shop and noting the numeric ID at the end of each category URL: `https://www.azurestandard.com/shop/category/{path}/{id}`
+| Endpoint | Status | Notes |
+|---|---|---|
+| `GET /drops/{id}` | **404** | Use paginated `/drops?limit=200&start=N` instead |
+| `GET /ordered-packaged-products` | **404** | Use `GET /person/{id}/ordered-packaged-products` |
+| `GET /orders/orders` | **404** | Use `GET /orders?filter-person={id}` |
+| `GET /products/product_lists` | **404** | Use `GET /v2/products/product_lists?customerNumber={id}` |
+| `GET /accounts_receivable/spend-metrics` | **unverified** | Not yet tested |
+| `GET /accounts_receivable/pending-payments-state` | **unverified** | Not yet tested |

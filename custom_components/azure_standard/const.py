@@ -10,6 +10,7 @@ API_BASE = "https://api.azurestandard.com"
 CONF_MODE = "mode"
 CONF_DROP_ID = "drop_id"
 CONF_EMAIL = "email"
+CONF_PERSON_ID = "person_id"
 CONF_SESSION_COOKIE = "session_cookie"  # stored in entry.data, not options
 CONF_TRACKED_PRODUCTS = "tracked_products"
 CONF_DISCOVERY_ENABLED = "discovery_enabled"
