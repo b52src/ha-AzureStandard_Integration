@@ -39,7 +39,8 @@
       "cannot_connect": "Unable to reach the Azure Standard API. Check your network and try again."
     },
     "abort": {
-      "already_configured": "This Azure Standard account or drop is already configured."
+      "already_configured": "This Azure Standard account or drop is already configured.",
+      "reauth_successful": "Re-authentication was successful."
     }
   },
   "entity": {
