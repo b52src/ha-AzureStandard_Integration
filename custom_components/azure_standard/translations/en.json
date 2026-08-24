@@ -56,6 +56,18 @@
       },
       "delivery_date": {
         "name": "Delivery date"
+      },
+      "active_order_status": {
+        "name": "Active order status"
+      },
+      "active_order_item_count": {
+        "name": "Active order items"
+      },
+      "active_order_total": {
+        "name": "Active order total"
+      },
+      "last_order_date": {
+        "name": "Last order date"
       }
     },
     "binary_sensor": {
