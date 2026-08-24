@@ -1,4 +1,5 @@
 {
   "name": "Azure Standard",
-  "render_readme": true
+  "render_readme": true,
+  "filename": "custom_components/azure_standard/icon_white.png"
 }
