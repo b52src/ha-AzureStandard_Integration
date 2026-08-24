@@ -1,4 +1,16 @@
 {
+  "options": {
+    "step": {
+      "init": {
+        "title": "Azure Standard — Product tracking",
+        "description": "Select which products you want to track with dedicated sensors. Only products ordered at least the minimum number of times appear as candidates.",
+        "data": {
+          "tracked_products": "Tracked products",
+          "min_purchase_count": "Minimum order count to show as candidate"
+        }
+      }
+    }
+  },
   "config": {
     "step": {
       "user": {

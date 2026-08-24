@@ -8,13 +8,25 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+)
 
 from .const import (
     CONF_DROP_ID,
     CONF_EMAIL,
+    CONF_MIN_PURCHASE_COUNT,
     CONF_MODE,
     CONF_PERSON_ID,
     CONF_SESSION_COOKIE,
+    CONF_TRACKED_PRODUCTS,
+    DEFAULT_MIN_PURCHASE_COUNT,
     DOMAIN,
     MODE_ACCOUNT,
     MODE_MANUAL,
@@ -65,6 +77,99 @@ async def _validate_drop_id(
         return False
 
 
+class AzureStandardOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle Azure Standard integration options (product tracking)."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self._config_entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict | None = None
+    ) -> FlowResult:
+        """Show the options form."""
+        # Grab the coordinator to read current candidate products
+        coordinator = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
+
+        # Build the list of candidate product codes (ordered by order_count desc)
+        candidate_options: list[SelectOptionDict] = []
+        if coordinator and coordinator.data and coordinator.data.product_stats:
+            candidates = sorted(
+                coordinator.data.product_stats.values(),
+                key=lambda s: s.order_count,
+                reverse=True,
+            )
+            candidate_options = [
+                SelectOptionDict(
+                    value=s.code,
+                    label=f"{s.code} — ordered {s.order_count}× (last: {s.last_ordered})",
+                )
+                for s in candidates
+                if s.is_candidate
+            ]
+
+        current_tracked: list[str] = self._config_entry.options.get(
+            CONF_TRACKED_PRODUCTS, []
+        )
+        current_min: int = self._config_entry.options.get(
+            CONF_MIN_PURCHASE_COUNT, DEFAULT_MIN_PURCHASE_COUNT
+        )
+
+        if user_input is not None:
+            return self.async_create_entry(
+                title="",
+                data={
+                    CONF_TRACKED_PRODUCTS: user_input.get(CONF_TRACKED_PRODUCTS, []),
+                    CONF_MIN_PURCHASE_COUNT: int(
+                        user_input.get(CONF_MIN_PURCHASE_COUNT, DEFAULT_MIN_PURCHASE_COUNT)
+                    ),
+                },
+            )
+
+        # If the coordinator has no candidates yet (e.g. history not loaded),
+        # show a simplified form without the product selector.
+        if not candidate_options:
+            schema = vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_MIN_PURCHASE_COUNT,
+                        default=current_min,
+                    ): NumberSelector(
+                        NumberSelectorConfig(min=1, max=100, step=1, mode=NumberSelectorMode.BOX)
+                    ),
+                }
+            )
+            return self.async_show_form(
+                step_id="init",
+                data_schema=schema,
+                description_placeholders={
+                    "note": "No product history loaded yet. Run a coordinator update first."
+                },
+            )
+
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_TRACKED_PRODUCTS,
+                    default=current_tracked,
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=candidate_options,
+                        multiple=True,
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
+                vol.Optional(
+                    CONF_MIN_PURCHASE_COUNT,
+                    default=current_min,
+                ): NumberSelector(
+                    NumberSelectorConfig(min=1, max=100, step=1, mode=NumberSelectorMode.BOX)
+                ),
+            }
+        )
+
+        return self.async_show_form(step_id="init", data_schema=schema)
+
+
 class AzureStandardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the initial integration setup.
 
@@ -74,6 +179,13 @@ class AzureStandardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> AzureStandardOptionsFlowHandler:
+        """Return the options flow handler."""
+        return AzureStandardOptionsFlowHandler(config_entry)
 
     def __init__(self) -> None:
         self._mode: str | None = None
