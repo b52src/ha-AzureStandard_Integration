@@ -178,10 +178,14 @@ class DropNameSensor(AzureStandardEntity, SensorEntity):
 
 
 class DeliveryDateSensor(AzureStandardEntity, SensorEntity):
-    """Expected pickup / delivery date for the next order."""
+    """Expected pickup / delivery window for the next order.
+
+    Azure Standard often expresses this as a week range ("Week of Sep 13")
+    rather than a precise date, so this sensor returns a plain string and
+    carries no DATE device class.
+    """
 
     _attr_translation_key = "delivery_date"
-    _attr_device_class = SensorDeviceClass.DATE
     _attr_icon = "mdi:truck-delivery"
 
     def __init__(self, coordinator: AzureStandardCoordinator) -> None:
@@ -189,8 +193,8 @@ class DeliveryDateSensor(AzureStandardEntity, SensorEntity):
         self._attr_unique_id = f"{coordinator.entry.entry_id}_delivery_date"
 
     @property
-    def native_value(self) -> date | None:
-        """Return the next delivery date."""
+    def native_value(self) -> str | None:
+        """Return the next delivery window string, e.g. 'Week of Sep 13'."""
         return self.coordinator.data.delivery_date if self.coordinator.data else None
 
 
@@ -221,19 +225,27 @@ class ActiveOrderStatusSensor(AzureStandardEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return order ID and cutoff date as extra attributes."""
+        """Return rich order metadata as extra attributes."""
         if not self.coordinator.data or not self.coordinator.data.active_order:
             return {}
-        order = self.coordinator.data.active_order
+        d = self.coordinator.data
         return {
-            "order_id": order.get("id") or order.get("orderId"),
-            "cutoff_date": order.get("cutoffDate") or order.get("cutoff-date"),
-            "delivery_date": order.get("deliveryDate") or order.get("trip-delivery"),
+            "order_id": d.cart_order_id,
+            "order_placed": d.order_is_placed,
+            "item_count": d.cart_item_count,
+            "total": d.cart_total,
+            "cutoff": d.cart_cutoff,
+            "delivery": d.cart_delivery,
         }
 
 
 class ActiveOrderItemCountSensor(AzureStandardEntity, SensorEntity):
-    """Number of line items in the current open order."""
+    """Number of line items in the current open order (cart).
+
+    Uses the item count fetched from the full order detail endpoint
+    (GET /order/{id}).  Returns 0 when the active order exists but has
+    no items, and None when there is no active order at all.
+    """
 
     _attr_translation_key = "active_order_item_count"
     _attr_native_unit_of_measurement = "items"
@@ -246,29 +258,26 @@ class ActiveOrderItemCountSensor(AzureStandardEntity, SensorEntity):
 
     @property
     def native_value(self) -> int | None:
-        """Return the line-item count of the active order."""
+        """Return the cart item count from the full order detail."""
         if not self.coordinator.data:
             return None
-        order = self.coordinator.data.active_order
-        if order is None:
+        if self.coordinator.data.active_order is None:
             return None
-        # The API may expose items as a list under several key names
-        items = (
-            order.get("items")
-            or order.get("orderItems")
-            or order.get("line-items")
-            or []
-        )
-        if isinstance(items, list):
-            return len(items)
-        # Some API responses surface a pre-computed count
-        count = order.get("itemCount") or order.get("item-count")
-        if count is not None:
-            try:
-                return int(count)
-            except (TypeError, ValueError):
-                pass
-        return None
+        # cart_item_count is populated by the coordinator from GET /order/{id}
+        return self.coordinator.data.cart_item_count
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Include order ID, placed status, cutoff, and delivery window."""
+        if not self.coordinator.data or self.coordinator.data.active_order is None:
+            return {}
+        d = self.coordinator.data
+        return {
+            "order_id": d.cart_order_id,
+            "order_placed": d.order_is_placed,
+            "cutoff": d.cart_cutoff,
+            "delivery": d.cart_delivery,
+        }
 
 
 class ActiveOrderTotalSensor(AzureStandardEntity, SensorEntity):
@@ -285,23 +294,23 @@ class ActiveOrderTotalSensor(AzureStandardEntity, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        """Return the order total, or None if no active order."""
+        """Return the order total from coordinator cart data, or None if no active order."""
         if not self.coordinator.data:
             return None
-        order = self.coordinator.data.active_order
-        if order is None:
+        if self.coordinator.data.active_order is None:
             return None
-        raw = (
-            order.get("total")
-            or order.get("orderTotal")
-            or order.get("order-total")
-        )
-        if raw is not None:
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                pass
-        return None
+        return self.coordinator.data.cart_total
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Expose order ID so the total can be correlated without opening another sensor."""
+        if not self.coordinator.data or self.coordinator.data.active_order is None:
+            return {}
+        d = self.coordinator.data
+        return {
+            "order_id": d.cart_order_id,
+            "order_placed": d.order_is_placed,
+        }
 
 
 class LastOrderDateSensor(AzureStandardEntity, SensorEntity):

@@ -99,6 +99,9 @@
     "binary_sensor": {
       "order_window_open": {
         "name": "Order window open"
+      },
+      "order_placed": {
+        "name": "Order placed"
       }
     }
   }

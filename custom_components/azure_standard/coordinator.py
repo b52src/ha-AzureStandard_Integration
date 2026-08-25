@@ -51,10 +51,16 @@ class AzureStandardData:
     # ---- Public (no auth needed) ----
     drop: dict | None = None
     next_cutoff: date | None = None
-    delivery_date: date | None = None
+    delivery_date: str | None = None  # Raw string e.g. "Week of Sep 13" or "2025-09-13"
 
     # ---- Account (None if mode=manual or not yet fetched) ----
     active_order: dict | None = None
+    cart_item_count: int | None = None  # item count (from list or full detail)
+    cart_order_id: int | None = None  # numeric order ID of the active/open order
+    cart_total: float | None = None  # order total from the list response
+    cart_cutoff: str | None = None  # cutoff datetime string from the list response
+    cart_delivery: str | None = None  # delivery window string from the list response
+    order_is_placed: bool | None = None  # True once the order is submitted/checked-out
     orders: list[dict] = field(default_factory=list)
     product_lists: list[dict] = field(default_factory=list)
     ordered_products: list[dict] = field(default_factory=list)
@@ -83,20 +89,21 @@ def _parse_date(value: str | None) -> date | None:
         return None
 
 
-def _find_next_cutoff(drop: dict) -> tuple[date | None, date | None]:
+def _find_next_cutoff(drop: dict) -> tuple[date | None, str | None]:
     """Extract the nearest future cutoff from a drop dict.
 
     Confirmed order-frequency shape from live API:
-      {"cutoff": "YYYY-MM-DD", "orders": N, "homeDeliveryOrders": [...]}
+      {"cutoff": "YYYY-MM-DD", "orders": N, "homeDeliveryOrders": [...],
+       "estimatedDelivery": "Week of Sep 13"}
 
-    No delivery date is present in the public /drops response.  We return
-    ``None`` for the delivery date; a future phase may fetch it from the
-    trip endpoint.
+    The delivery date from Azure Standard is often a descriptive string like
+    "Week of Sep 13" rather than an ISO date, so we store it as a raw string.
 
-    Returns ``(next_cutoff_date, delivery_date)``.
+    Returns ``(next_cutoff_date, delivery_string)``.
     """
     today = date.today()
     best_cutoff: date | None = None
+    best_delivery: str | None = None
 
     for freq in drop.get("order-frequency", []):
         if not isinstance(freq, dict):
@@ -106,8 +113,17 @@ def _find_next_cutoff(drop: dict) -> tuple[date | None, date | None]:
             continue
         if best_cutoff is None or cutoff < best_cutoff:
             best_cutoff = cutoff
+            # Delivery may be a string like "Week of Sep 13" or an ISO date
+            raw = (
+                freq.get("estimatedDelivery")
+                or freq.get("estimated-delivery")
+                or freq.get("deliveryDate")
+                or freq.get("delivery-date")
+                or freq.get("delivery")
+            )
+            best_delivery = str(raw).strip() if raw else None
 
-    return best_cutoff, None
+    return best_cutoff, best_delivery
 
 
 # ---------------------------------------------------------------------------
@@ -116,28 +132,39 @@ def _find_next_cutoff(drop: dict) -> tuple[date | None, date | None]:
 
 
 def _find_active_order(orders: list[dict]) -> dict | None:
-    """Return the most recent non-terminal order, or None.
+    """Return the most actionable non-terminal order, or None.
 
-    Confirmed status values from the live API:
-      "open"                 — order is being built
-      "delivered-to-drop"    — order has arrived at the drop
+    Priority:
+      1. "open" status — unplaced cart (highest priority; user is still building it)
+      2. Other non-terminal statuses (e.g. "processing", "pending") — order submitted
+         but not yet shipped
 
-    We treat anything that is NOT a clearly terminal state as active.
-    The terminal set uses substring matching so future variants like
-    "delivered-to-customer" are also caught.
+    Terminal statuses (order is done, no longer actionable):
+      "shipped"          — in transit
+      "delivered*"       — arrived at drop or customer
+      "cancelled*"       — cancelled
+      "refund*"          — refunded
+
+    Confirmed status values from live API:
+      "open"             — cart being built, not yet checked out
+      "delivered-to-drop" — arrived at the drop location
     """
     def _is_terminal(status: str) -> bool:
         s = status.lower()
-        return any(t in s for t in ("cancel", "refund", "delivered"))
+        # "shipped" orders are on their way but no longer editable — treat as terminal
+        # so the open cart ("open" status) is correctly selected instead.
+        return any(t in s for t in ("cancel", "refund", "delivered", "ship"))
 
     candidates = [o for o in orders if not _is_terminal(o.get("status", ""))]
     if not candidates:
         return None
-    # Sort by placed date descending; fall back to id descending
-    return max(
-        candidates,
-        key=lambda o: o.get("placed") or str(o.get("id", "")),
-    )
+
+    # Prefer the open cart (status == "open") over anything else.
+    # If multiple "open" orders exist (unlikely), take the highest order ID.
+    open_carts = [o for o in candidates if o.get("status", "").lower() == "open"]
+    pool = open_carts if open_carts else candidates
+
+    return max(pool, key=lambda o: o.get("id") or 0)
 
 
 def _extract_credit(account_entries: list[dict]) -> float | None:
@@ -417,9 +444,121 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
 
             result.orders = orders
             result.active_order = _find_active_order(orders)
+
+            # Extract cart metadata that the orders list endpoint provides directly.
+            # The GUI shows the list returns: id, status, cutoff datetime, estimated
+            # delivery, item count, and total without a separate fetch.
+            if result.active_order is not None:
+                o = result.active_order
+                order_id = o.get("id") or o.get("orderId")
+                result.cart_order_id = int(order_id) if order_id is not None else None
+
+                # Item count — try multiple possible key names from the list response
+                raw_count = (
+                    o.get("itemCount")
+                    or o.get("item-count")
+                    or o.get("itemsCount")
+                    or o.get("numberOfItems")
+                    or o.get("number-of-items")
+                    or o.get("quantity")
+                )
+                if raw_count is not None:
+                    try:
+                        result.cart_item_count = int(raw_count)
+                    except (TypeError, ValueError):
+                        result.cart_item_count = None
+                # If list doesn't have it, check for an embedded items list
+                if result.cart_item_count is None:
+                    items_list = o.get("items") or o.get("orderItems") or o.get("line-items")
+                    if isinstance(items_list, list):
+                        result.cart_item_count = len(items_list)
+
+                # Order total from the list response
+                raw_total = (
+                    o.get("total")
+                    or o.get("orderTotal")
+                    or o.get("order-total")
+                    or o.get("subtotal")
+                )
+                if raw_total is not None:
+                    try:
+                        result.cart_total = float(raw_total)
+                    except (TypeError, ValueError):
+                        pass
+
+                # Cutoff datetime string (e.g. "Wednesday, Sep 9, 6:02 PM")
+                result.cart_cutoff = str(
+                    o.get("cutoff")
+                    or o.get("cutoffDate")
+                    or o.get("cutoff-date")
+                    or o.get("checkoutBy")
+                    or ""
+                ).strip() or None
+
+                # Delivery window string (e.g. "Week of Sep 13")
+                result.cart_delivery = str(
+                    o.get("estimatedDelivery")
+                    or o.get("estimated-delivery")
+                    or o.get("deliveryDate")
+                    or o.get("delivery-date")
+                    or o.get("delivery")
+                    or o.get("trip-delivery")
+                    or ""
+                ).strip() or None
+
+                # placed: non-null value means the order has been submitted
+                placed_raw = (
+                    o.get("placed")
+                    or o.get("placedDate")
+                    or o.get("placed-date")
+                )
+                result.order_is_placed = bool(placed_raw)
+
+                # Fetch the full order detail for the definitive item count
+                # (the list may omit it) and to confirm the placed status.
+                if order_id and result.cart_item_count is None:
+                    try:
+                        full_order = await self._authenticated_get(
+                            lambda oid=order_id: self.client.get_order(oid)
+                        )
+                        items = (
+                            full_order.get("items")
+                            or full_order.get("orderItems")
+                            or full_order.get("line-items")
+                            or []
+                        )
+                        if isinstance(items, list):
+                            result.cart_item_count = len(items)
+                        # Confirm placed status from the full record
+                        full_placed = (
+                            full_order.get("placed")
+                            or full_order.get("placedDate")
+                            or full_order.get("placed-date")
+                        )
+                        result.order_is_placed = bool(full_placed)
+                        # Also pick up total if the list didn't have it
+                        if result.cart_total is None:
+                            raw_t = (
+                                full_order.get("total")
+                                or full_order.get("orderTotal")
+                                or full_order.get("order-total")
+                            )
+                            if raw_t is not None:
+                                try:
+                                    result.cart_total = float(raw_t)
+                                except (TypeError, ValueError):
+                                    pass
+                    except (aiohttp.ClientError, UpdateFailed):
+                        _LOGGER.debug("Could not fetch full order detail for id=%s", order_id)
         elif self.data:
             result.orders = self.data.orders
             result.active_order = self.data.active_order
+            result.cart_item_count = self.data.cart_item_count
+            result.cart_order_id = self.data.cart_order_id
+            result.cart_total = self.data.cart_total
+            result.cart_cutoff = self.data.cart_cutoff
+            result.cart_delivery = self.data.cart_delivery
+            result.order_is_placed = self.data.order_is_placed
 
         # ---- Account credit balance ----
         if self._orders_due():  # piggyback on the orders interval

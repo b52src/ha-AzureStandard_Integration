@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.7] - 2025-07-15
+
+### Fixed
+- **Delivery date shown as `Unknown`** — `DeliveryDateSensor` used `SensorDeviceClass.DATE` but Azure Standard returns a week-range string like "Week of Sep 13", not an ISO date. Device class removed; sensor now shows the raw string.
+- **Active order status showing "shipped" for the open cart** — `_find_active_order` did not treat "shipped" as a terminal status, so a recently shipped prior order was selected instead of the open cart. "ship" added to the terminal set.
+- **Active order item count showing 0** — the `/orders` list endpoint does not embed line items; the coordinator now fetches `GET /order/{id}` when the item count is absent from the list response to get the true count.
+
+### Added
+- **`Order placed` binary sensor** (`binary_sensor.azure_standard_order_placed`) — `ON` once the active order has been checked out / submitted. While building your cart (order status "open", no `placed` timestamp) it stays `OFF`.
+- **Richer order attributes on every active-order sensor** — all three active-order sensors (`status`, `item count`, `total`) and the new `order_placed` binary sensor now expose `order_id`, `order_placed`, `cutoff`, and `delivery` as extra attributes, matching the data shown in the Azure Standard Orders GUI.
+- **`cart_order_id`, `cart_total`, `cart_cutoff`, `cart_delivery` coordinator fields** — extracted directly from the orders list response so no extra API call is needed for metadata the list already provides.
+- **`_find_active_order` prefers `open` status** — explicitly selects the unplaced cart (status `open`) over other non-terminal orders, then falls back to highest order ID.
+
 ## [0.0.6] - 2025-07-14
 
 ### Fixed
