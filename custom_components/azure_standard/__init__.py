@@ -2,20 +2,39 @@
 from __future__ import annotations
 
 import logging
+import pathlib
 
+from homeassistant.components import panel_custom
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import AzureStandardApiClient
-from .const import CONF_DROP_ID, CONF_MODE, DOMAIN, MODE_MANUAL
+from .const import DOMAIN
 from .coordinator import AzureStandardCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
+
+# Panel registration constants
+_PANEL_URL    = "/api/panel_custom/azure_standard"
+_PANEL_JS     = "azure-standard-panel.js"
+_PANEL_ELEMENT = "azure-standard-panel"
+_PANEL_TITLE  = "Azure Standard"
+_PANEL_ICON   = "mdi:sprout"
+
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Register the www/ directory so HA serves the panel JS file."""
+    www_path = pathlib.Path(__file__).parent / "www"
+    hass.http.register_static_path(
+        "/azure_standard_panel",
+        str(www_path),
+        cache_headers=True,
+    )
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -37,6 +56,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
+    # Register the sidebar panel (idempotent — skip if already registered by
+    # a previous config entry for this domain).
+    if DOMAIN not in hass.data.get("frontend_panels", {}):
+        await panel_custom.async_register_panel(
+            hass,
+            webcomponent_name=_PANEL_ELEMENT,
+            frontend_url_path=DOMAIN,
+            module_url=f"/azure_standard_panel/{_PANEL_JS}",
+            sidebar_title=_PANEL_TITLE,
+            sidebar_icon=_PANEL_ICON,
+            require_admin=False,
+            config={},
+        )
+
     return True
 
 
@@ -45,6 +78,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         hass.data[DOMAIN].pop(entry.entry_id)
+
+    # Remove the panel when the last config entry is unloaded.
+    if not hass.data.get(DOMAIN):
+        hass.components.frontend.async_remove_panel(DOMAIN)
+
     return unloaded
 
 

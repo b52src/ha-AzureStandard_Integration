@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.1] - 2025-07-20
+
+### Added
+- **Sidebar panel** — a dedicated Home Assistant sidebar entry ("Azure Standard", `mdi:sprout` icon) that renders a live dashboard of all integration data without needing a Lovelace card:
+  - Drop name, order window status badge, cutoff countdown with urgency colouring
+  - Pickup date, pickup week, days until pickup
+  - Active order status, item count, order total, last order date, account credit, pending payment (account mode)
+  - Shopping lists with inline item previews (account mode)
+  - Tracked products table with last ordered, times ordered, days since, and reorder-due highlight (account mode)
+- **`www/azure-standard-panel.js`** — self-contained Web Component registered via `panel_custom`; reads entity states live via the `hass` property, no extra API calls.
+- **`async_setup`** hook in `__init__.py` — registers `www/` as a static path at `/azure_standard_panel/` so the JS file is served by HA's HTTP server.
+- **`frontend` dependency** added to `manifest.json` so HA loads the frontend integration before this one.
+
 ## [0.1.0] - 2025-07-19
 
 ### Fixed
