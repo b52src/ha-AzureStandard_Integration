@@ -20,10 +20,14 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 # Panel registration constants
-_PANEL_JS      = "azure-standard-panel.js"
-_PANEL_ELEMENT = "azure-standard-panel"
-_PANEL_TITLE   = "Azure Standard"
-_PANEL_ICON    = "mdi:sprout"
+_PANEL_JS         = "azure-standard-panel.js"
+_PANEL_ELEMENT    = "azure-standard-panel"
+_PANEL_TITLE      = "Azure Standard"
+_PANEL_ICON       = "mdi:sprout"
+
+# Lovelace card — served automatically from the same www/ static path.
+# URL: /azure_standard_panel/azure-standard-cutoff-card.js
+_CUTOFF_CARD_JS   = "azure-standard-cutoff-card.js"
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:

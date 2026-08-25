@@ -1,0 +1,68 @@
+blueprint:
+  name: "Azure Standard — Order Window Opened"
+  description: >
+    Sends a notification the moment your Azure Standard order window opens
+    (i.e. `binary_sensor.azure_standard_order_window_open` turns **on**).
+    Ideal for a "you can start placing your order now" alert.
+
+    **Required entities (provided by the Azure Standard integration):**
+    - `binary_sensor.azure_standard_order_window_open`
+    - `sensor.azure_standard_next_cutoff`
+    - `sensor.azure_standard_days_until_cutoff`
+  domain: automation
+  input:
+    notify_target:
+      name: Notification target
+      description: >
+        The `notify.*` service to call, e.g. `notify.mobile_app_my_phone`
+        or `notify.persistent_notification`.
+      selector:
+        text: {}
+
+    message_template:
+      name: Notification message
+      description: >
+        Message body. Template variables available:
+        - `{{ cutoff }}` — cutoff date
+        - `{{ days }}` — days remaining until cutoff
+      default: "Your Azure Standard order window is now open! Cutoff is {{ cutoff }} ({{ days }} day(s) away)."
+      selector:
+        text:
+          multiline: true
+
+    title_template:
+      name: Notification title
+      description: >
+        Notification title. Supports the same template variables.
+      default: "Azure Standard order window open"
+      selector:
+        text: {}
+
+    # Optional: prevent repeated firing if the integration reloads or HA
+    # restarts while the window is already open.
+    trigger_only_on_rising_edge:
+      name: Only notify on state change (recommended)
+      description: >
+        When enabled (default), the notification is only sent when the
+        order window **transitions** from closed to open, not every time HA
+        starts or the entity is restored while already `on`. Disable only
+        if you want a reminder every time the integration initialises.
+      default: true
+      selector:
+        boolean: {}
+
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.azure_standard_order_window_open
+    to: "on"
+
+conditions: []
+
+actions:
+  - variables:
+      cutoff: "{{ states('sensor.azure_standard_next_cutoff') }}"
+      days: "{{ states('sensor.azure_standard_days_until_cutoff') }}"
+  - action: !input notify_target
+    data:
+      title: !input title_template
+      message: !input message_template

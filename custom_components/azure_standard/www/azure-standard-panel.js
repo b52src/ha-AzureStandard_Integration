@@ -1,27 +1,35 @@
 /**
  * Azure Standard — Sidebar Panel
- * Phase 14 / v0.1.5
+ * Phase 17 / v0.1.8
  *
- * Four tabs (account-mode tabs hidden in manual mode):
+ * Four content tabs (account-mode tabs hidden in manual mode):
  *   1. Summary   — Drop & Cutoff + Active Order snapshot
  *   2. Lists     — Shopping lists with link-out to Azure Standard site
  *   3. Products  — Tracked products table; reorder-due badge on tab
  *   4. Account   — Credit, pending payment, order history
  *
- * Tab state (`this._tab`) persists across re-renders triggered by hass
- * state updates so the user's selected tab doesn't reset on every poll.
+ * Plus one persistent tab:
+ *   ⚙ Settings — toggle which content tabs are visible; saved to localStorage.
  *
- * Phase 12 notes:
- *   - No in-panel list editing; "Edit on Azure Standard" links open the
- *     site in a new tab.
- *   - Manual coordinator refresh button on every tab footer.
- *   - Products tab shows order frequency alongside last-ordered / days-since.
+ * Tab state (`this._tab`) persists across re-renders triggered by hass state
+ * updates so the user's selected tab doesn't reset on every poll.
+ *
+ * Phase 17 notes:
+ *   - Settings tab added (⚙ icon, always visible, always last).
+ *   - Three toggleable tabs: Lists, Products, Account (Summary is always on).
+ *   - Visibility preferences stored in localStorage under
+ *     "azure_standard_panel_tab_visibility" as a JSON object.
+ *   - Hiding a tab while it is active switches view to Summary.
+ *   - A "Reset to defaults" button restores all three tabs to visible.
  */
 
 const AZURE_STANDARD_URL  = "https://www.azurestandard.com";
 const _LISTS_BASE   = `${AZURE_STANDARD_URL}/my-account/lists`;
 const _ORDERS_BASE  = `${AZURE_STANDARD_URL}/my-account/order`;
 const _SHOP_BASE    = `${AZURE_STANDARD_URL}/shop/product`;
+
+const _STORAGE_KEY = "azure_standard_panel_tab_visibility";
+const _TAB_DEFAULTS = { lists: true, products: true, account: true };
 
 class AzureStandardPanel extends HTMLElement {
   // ------------------------------------------------------------------ setup
@@ -30,6 +38,11 @@ class AzureStandardPanel extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._tab = "summary";
+    // Tracks how many reorder-due products the user last saw on the Products tab.
+    // Badge only shows when current count exceeds this value.
+    this._seenReorderCount = 0;
+    // Per-tab visibility (lists / products / account).  Summary is always on.
+    this._tabVis = this._loadTabVis();
   }
 
   set hass(hass) {
@@ -39,6 +52,26 @@ class AzureStandardPanel extends HTMLElement {
 
   setConfig(config) {
     this._config = config;
+  }
+
+  // -------------------------------------------------------- visibility storage
+
+  _loadTabVis() {
+    try {
+      const raw = localStorage.getItem(_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        // Merge with defaults so newly-added tabs default to visible.
+        return Object.assign({}, _TAB_DEFAULTS, parsed);
+      }
+    } catch (_) { /* ignore JSON/localStorage errors */ }
+    return Object.assign({}, _TAB_DEFAULTS);
+  }
+
+  _saveTabVis() {
+    try {
+      localStorage.setItem(_STORAGE_KEY, JSON.stringify(this._tabVis));
+    } catch (_) { /* ignore quota/security errors */ }
   }
 
   // ----------------------------------------------------------------- helpers
@@ -120,20 +153,25 @@ class AzureStandardPanel extends HTMLElement {
       return this._state(`sensor.azure_standard_${code}_reorder_due`) === "true";
     }).length;
 
+    // Unseen count: how many reorder-due products the user hasn't seen yet.
+    // Clamp to zero so a decrease (product re-ordered) never shows a stale badge.
+    const unseenCount = Math.max(0, reorderCount - this._seenReorderCount);
+
     // ── Tab definitions ───────────────────────────────────────────────────
+    // Summary is always present; account tabs are gated by hasAccount AND
+    // the user's per-tab visibility setting.
     const tabs = [
       { id: "summary", label: "Summary" },
-      ...(hasAccount ? [
-        { id: "lists",    label: "Lists",    badge: e.listEntities.length || null },
-        { id: "products", label: "Products", badge: reorderCount || null },
-        { id: "account",  label: "Account" },
-      ] : []),
+      ...(hasAccount && this._tabVis.lists    ? [{ id: "lists",    label: "Lists",    badge: e.listEntities.length || null }] : []),
+      ...(hasAccount && this._tabVis.products ? [{ id: "products", label: "Products", badge: unseenCount || null }] : []),
+      ...(hasAccount && this._tabVis.account  ? [{ id: "account",  label: "Account" }] : []),
+      { id: "settings", label: "⚙", title: "Panel settings" },
     ];
 
     if (!tabs.find((t) => t.id === this._tab)) this._tab = "summary";
 
     const tabBar = tabs.map((t) => `
-      <button class="tab${this._tab === t.id ? " tab-active" : ""}" data-tab="${t.id}">
+      <button class="tab${this._tab === t.id ? " tab-active" : ""}${t.id === "settings" ? " tab-settings" : ""}" data-tab="${t.id}"${t.title ? ` title="${t.title}"` : ""}>
         ${this._escHtml(t.label)}
         ${t.badge ? `<span class="tab-badge">${t.badge}</span>` : ""}
       </button>`
@@ -201,7 +239,14 @@ class AzureStandardPanel extends HTMLElement {
             View order on Azure Standard ↗
           </a>
         </div>` : ""}
-      </section>` : ""}`;
+      </section>` : ""}
+
+      ${unseenCount > 0 ? `
+      <div class="reorder-alert" id="reorder-alert">
+        <span class="reorder-alert-icon">⚠</span>
+        <span>${unseenCount} product${unseenCount > 1 ? "s" : ""} due for reorder</span>
+        <button class="reorder-alert-btn" id="go-products">View Products →</button>
+      </div>` : ""}`;
 
     // ── Lists tab ─────────────────────────────────────────────────────────
     const listsTab = e.listEntities.length
@@ -348,12 +393,48 @@ class AzureStandardPanel extends HTMLElement {
         </a>
       </div>`;
 
+    // ── Settings tab ──────────────────────────────────────────────────────
+    // Checkboxes to show/hide Lists, Products, and Account tabs.
+    // Summary is always visible and rendered as a disabled, checked item.
+    const settingsTab = `
+      <section class="card">
+        <h2>Panel settings</h2>
+        <p class="settings-desc">Choose which tabs appear in this panel.
+          Changes are saved automatically and persist across reloads.</p>
+        <div class="settings-rows">
+          <label class="settings-row settings-row-disabled">
+            <input type="checkbox" checked disabled />
+            <span class="settings-label">Summary</span>
+            <span class="settings-note">Always shown</span>
+          </label>
+          <label class="settings-row">
+            <input type="checkbox" id="vis-lists" ${this._tabVis.lists ? "checked" : ""} />
+            <span class="settings-label">Lists</span>
+            <span class="settings-note">Shopping lists (account mode only)</span>
+          </label>
+          <label class="settings-row">
+            <input type="checkbox" id="vis-products" ${this._tabVis.products ? "checked" : ""} />
+            <span class="settings-label">Products</span>
+            <span class="settings-note">Tracked products &amp; reorder reminders</span>
+          </label>
+          <label class="settings-row">
+            <input type="checkbox" id="vis-account" ${this._tabVis.account ? "checked" : ""} />
+            <span class="settings-label">Account</span>
+            <span class="settings-note">Credit, payments &amp; order history</span>
+          </label>
+        </div>
+        <div class="settings-footer">
+          <button class="btn-reset" id="btn-reset-vis">Reset to defaults</button>
+        </div>
+      </section>`;
+
     // ── Active tab content ────────────────────────────────────────────────
     const tabContent = (
       this._tab === "summary"  ? summaryTab  :
       this._tab === "lists"    ? listsTab    :
       this._tab === "products" ? productsTab :
       this._tab === "account"  ? accountTab  :
+      this._tab === "settings" ? settingsTab :
       summaryTab
     );
 
@@ -374,16 +455,45 @@ class AzureStandardPanel extends HTMLElement {
         <div class="tab-bar">${tabBar}</div>
         <div class="tab-content">${tabContent}</div>
 
-        <div class="footer">Azure Standard integration · v0.1.5</div>
+        <div class="footer">Azure Standard integration · v0.1.8</div>
       </div>
     `;
 
-    // Tab click listeners
+    // Tab click listeners — switching to Products marks all reorder-due as seen
     this.shadowRoot.querySelectorAll(".tab").forEach((btn) => {
       btn.addEventListener("click", () => {
         this._tab = btn.dataset.tab;
+        if (this._tab === "products") {
+          this._seenReorderCount = reorderCount;
+        }
         this._render();
       });
+    });
+
+    // "View Products →" button on the Summary alert banner
+    this.shadowRoot.getElementById("go-products")?.addEventListener("click", () => {
+      this._tab = "products";
+      this._seenReorderCount = reorderCount;
+      this._render();
+    });
+
+    // Settings — visibility checkboxes
+    ["lists", "products", "account"].forEach((key) => {
+      const el = this.shadowRoot.getElementById(`vis-${key}`);
+      el?.addEventListener("change", () => {
+        this._tabVis[key] = el.checked;
+        this._saveTabVis();
+        // If we just hid the currently active tab, fall back to summary.
+        if (!el.checked && this._tab === key) this._tab = "summary";
+        this._render();
+      });
+    });
+
+    // Settings — reset button
+    this.shadowRoot.getElementById("btn-reset-vis")?.addEventListener("click", () => {
+      this._tabVis = Object.assign({}, _TAB_DEFAULTS);
+      this._saveTabVis();
+      this._render();
     });
 
     // Refresh button — fires a persistent notification service call as a
@@ -472,6 +582,8 @@ class AzureStandardPanel extends HTMLElement {
         border-bottom-color: var(--primary-color, #16a34a);
         font-weight: 700;
       }
+      /* Settings tab is visually separate — pushed to the right */
+      .tab-settings { margin-left: auto; font-size: 16px; padding: 8px 12px; }
       .tab-badge {
         background: #dc2626;
         color: #fff;
@@ -610,6 +722,100 @@ class AzureStandardPanel extends HTMLElement {
         font-style: italic;
         font-size: 13px;
         margin-top: 4px;
+      }
+
+      /* reorder alert banner (Summary tab) */
+      .reorder-alert {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+        border-radius: 10px;
+        padding: 10px 14px;
+        margin-bottom: 16px;
+        font-size: 13px;
+        color: #c2410c;
+        font-weight: 500;
+      }
+      .reorder-alert-icon { font-size: 16px; flex-shrink: 0; }
+      .reorder-alert-btn {
+        margin-left: auto;
+        background: none;
+        border: 1px solid #c2410c;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #c2410c;
+        cursor: pointer;
+        font-family: inherit;
+        flex-shrink: 0;
+        transition: background 0.15s;
+      }
+      .reorder-alert-btn:hover { background: #fee2e2; }
+
+      /* settings tab */
+      .settings-desc {
+        font-size: 13px;
+        color: var(--secondary-text-color, #57606a);
+        margin-bottom: 16px;
+        line-height: 1.5;
+      }
+      .settings-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-bottom: 20px;
+      }
+      .settings-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 0.12s;
+      }
+      .settings-row:hover { background: var(--secondary-background-color, #f7f8fa); }
+      .settings-row-disabled { opacity: 0.55; cursor: default; }
+      .settings-row-disabled:hover { background: none; }
+      .settings-row input[type="checkbox"] {
+        width: 16px; height: 16px;
+        accent-color: var(--primary-color, #16a34a);
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+      .settings-row-disabled input[type="checkbox"] { cursor: default; }
+      .settings-label {
+        font-weight: 600;
+        font-size: 14px;
+        min-width: 80px;
+      }
+      .settings-note {
+        font-size: 12px;
+        color: var(--secondary-text-color, #57606a);
+      }
+      .settings-footer {
+        padding-top: 14px;
+        border-top: 1px solid var(--divider-color, #e5e7eb);
+      }
+      .btn-reset {
+        background: none;
+        border: 1px solid var(--divider-color, #e5e7eb);
+        border-radius: 8px;
+        padding: 6px 14px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--secondary-text-color, #57606a);
+        cursor: pointer;
+        font-family: inherit;
+        transition: background 0.15s, border-color 0.15s;
+      }
+      .btn-reset:hover {
+        background: var(--secondary-background-color, #f7f8fa);
+        border-color: var(--primary-text-color, #1f2328);
+        color: var(--primary-text-color, #1f2328);
       }
 
       /* footer */

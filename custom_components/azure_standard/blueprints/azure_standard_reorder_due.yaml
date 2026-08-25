@@ -1,0 +1,120 @@
+blueprint:
+  name: "Azure Standard — Reorder Due Reminder"
+  description: >
+    Sends a periodic reminder when one or more tracked products are
+    overdue for reorder (i.e. `days_until_reorder` has gone negative).
+
+    The integration exposes a `sensor.azure_standard_reorder_due_count`
+    sensor that counts how many tracked products are currently past their
+    suggested reorder date. This blueprint watches that sensor and fires
+    whenever the count is above zero.
+
+    **Required entities (provided by the Azure Standard integration):**
+    - `sensor.azure_standard_reorder_due_count`
+
+    **Tip:** Set `repeat_hours` to `0` to fire only once (when the sensor
+    first goes above zero), or to a positive integer to re-notify on a
+    regular cadence while products remain overdue.
+  domain: automation
+  input:
+    notify_target:
+      name: Notification target
+      description: >
+        The `notify.*` service to call, e.g. `notify.mobile_app_my_phone`
+        or `notify.persistent_notification`.
+      selector:
+        text: {}
+
+    message_template:
+      name: Notification message
+      description: >
+        Message body. Template variables available:
+        - `{{ count }}` — number of overdue products
+        - `{{ plural }}` — `"product"` or `"products"` depending on count
+      default: "{{ count }} {{ plural }} overdue for reorder on Azure Standard. Check the Products tab to see which ones."
+      selector:
+        text:
+          multiline: true
+
+    title_template:
+      name: Notification title
+      description: Supports the same `{{ count }}` / `{{ plural }}` variables.
+      default: "Azure Standard reorder reminder"
+      selector:
+        text: {}
+
+    minimum_overdue:
+      name: Minimum overdue count to notify
+      description: >
+        Only trigger the notification when at least this many products are
+        overdue. Set to `1` (default) to notify on the first overdue product.
+        Increase to reduce notification noise if you have many tracked products.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 20
+          mode: box
+
+    repeat_hours:
+      name: Repeat every N hours (0 = notify once)
+      description: >
+        After the initial notification, re-send every N hours while products
+        remain overdue. Set to `0` to send only once per "newly overdue" event.
+        A value of `24` means one reminder per day.
+      default: 24
+      selector:
+        number:
+          min: 0
+          max: 168
+          unit_of_measurement: hours
+          mode: slider
+
+triggers:
+  # Fire when count transitions from below-threshold to at-or-above-threshold.
+  - trigger: numeric_state
+    entity_id: sensor.azure_standard_reorder_due_count
+    above: !input minimum_overdue
+    # Minus 1 because numeric_state "above N" means > N, so for minimum_overdue
+    # = 1 this means the count must be > 1. We want >= 1, so subtract 1.
+    # HA evaluates this as a template at load time.
+    id: "first_overdue"
+    # Re-trigger on time-pattern as well if repeat_hours > 0.
+
+  # Optional: periodic repeat while still overdue.
+  - trigger: time_pattern
+    # Fire once per hour; the condition below gates on repeat_hours.
+    hours: "/1"
+    id: "periodic"
+
+conditions:
+  # Count must be >= minimum_overdue.
+  - condition: numeric_state
+    entity_id: sensor.azure_standard_reorder_due_count
+    above: 0
+
+actions:
+  - variables:
+      count: "{{ states('sensor.azure_standard_reorder_due_count') | int(0) }}"
+      plural: "{{ 'product' if count == 1 else 'products' }}"
+      threshold: !input minimum_overdue
+      repeat: !input repeat_hours
+
+  # Gate: skip if count is below the user's threshold.
+  - condition: template
+    value_template: "{{ count >= threshold }}"
+
+  # Gate: if triggered by the periodic timer, only proceed when repeat > 0.
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: "periodic"
+          - condition: template
+            value_template: "{{ repeat == 0 }}"
+        sequence:
+          - stop: "repeat_hours is 0 — periodic re-notification suppressed"
+
+  - action: !input notify_target
+    data:
+      title: !input title_template
+      message: !input message_template

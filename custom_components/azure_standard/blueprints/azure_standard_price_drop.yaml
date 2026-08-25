@@ -1,0 +1,157 @@
+blueprint:
+  name: "Azure Standard — Price Drop Alert"
+  description: >
+    Sends a notification when a tracked product's price drops below its rolling
+    average, so you know to stock up.
+
+    The integration tracks purchase prices in the `price_history` attribute of
+    each `sensor.azure_standard_*_last_ordered` entity (list of floats, oldest
+    first, up to 12 samples). The `last_price` attribute holds the most recent
+    sampled price. This blueprint fires when `last_price` falls to or below a
+    configurable fraction of that rolling average.
+
+    **How to use:**
+    1. Pick the specific product sensor you want to watch (`product_sensor`).
+    2. Set a notify target, e.g. `notify.mobile_app_my_phone`.
+    3. Optionally tune `threshold_pct` (default 0.95 = alert at 5% below avg)
+       and `min_samples` (default 3 — must have at least 3 price history
+       entries before the alert can fire).
+
+    **Template variables available in `message_template`:**
+    - `{{ name }}` — product friendly name (falls back to entity ID)
+    - `{{ price }}` — current price (2 decimal places)
+    - `{{ avg }}` — rolling average price (2 decimal places)
+    - `{{ pct_off }}` — percentage below average (1 decimal place)
+    - `{{ cutoff }}` — state of `sensor.azure_standard_next_cutoff`
+  domain: automation
+  source_url: "https://forgejo.crow-nest.xyz/scrow/AzureStandard_Intigration/raw/branch/main/custom_components/azure_standard/blueprints/azure_standard_price_drop.yaml"
+  input:
+    product_sensor:
+      name: Product sensor
+      description: >
+        The `sensor.azure_standard_*_last_ordered` entity to watch for price
+        drops. Select one product per automation instance; duplicate this
+        automation to watch additional products.
+      selector:
+        entity:
+          domain: sensor
+
+    notify_target:
+      name: Notification target
+      description: >
+        The `notify.*` service to call, e.g. `notify.mobile_app_my_phone`
+        or `notify.persistent_notification`.
+      selector:
+        text: {}
+
+    threshold_pct:
+      name: Price drop threshold
+      description: >
+        Fire the alert when the current price is at or below this fraction of
+        the rolling average. `0.95` means "5% below average"; `0.90` means
+        "10% below average". Lower values require a deeper discount before
+        the alert fires.
+      default: 0.95
+      selector:
+        number:
+          min: 0.50
+          max: 1.00
+          step: 0.01
+          mode: slider
+
+    min_samples:
+      name: Minimum price history samples
+      description: >
+        The alert will not fire until the product has at least this many
+        entries in its `price_history` attribute. Increase this to require
+        more purchase history before the rolling average is considered
+        reliable.
+      default: 3
+      selector:
+        number:
+          min: 2
+          max: 12
+          step: 1
+          mode: box
+
+    message_template:
+      name: Notification message
+      description: >
+        Jinja2 template for the notification body. Available variables:
+        `{{ name }}`, `{{ price }}`, `{{ avg }}`, `{{ pct_off }}`,
+        `{{ cutoff }}`.
+      default: >-
+        {{ name }} is on sale for ${{ price }} (avg ${{ avg }},
+        {{ pct_off }}% off). Order window: {{ cutoff }}.
+      selector:
+        text:
+          multiline: true
+
+    title_template:
+      name: Notification title
+      description: Jinja2 template for the notification title.
+      default: "Azure Standard price drop"
+      selector:
+        text: {}
+
+triggers:
+  # Fire whenever last_price changes on the selected sensor.
+  # We re-evaluate in the condition/action using value_template because
+  # HA's numeric_state trigger cannot reference a dynamic below: threshold.
+  - trigger: state
+    entity_id: !input product_sensor
+    attribute: last_price
+    id: "price_changed"
+
+conditions:
+  # 1. Require a minimum number of price history samples.
+  - condition: template
+    value_template: >-
+      {% set sensor = product_sensor %}
+      {% set history = state_attr(sensor, 'price_history') %}
+      {{ history is not none and (history | length) >= (min_samples | int(3)) }}
+
+  # 2. Current price must be at or below threshold_pct × rolling average.
+  - condition: template
+    value_template: >-
+      {% set sensor = product_sensor %}
+      {% set history = state_attr(sensor, 'price_history') %}
+      {% set price = state_attr(sensor, 'last_price') | float(-1) %}
+      {% if history is none or (history | length) == 0 or price < 0 %}
+        false
+      {% else %}
+        {% set avg = (history | map('float') | sum) / (history | length) %}
+        {{ price <= avg * (threshold_pct | float(0.95)) }}
+      {% endif %}
+
+actions:
+  # Compute display variables once, then send the notification.
+  - variables:
+      _sensor: !input product_sensor
+      _history: "{{ state_attr(_sensor, 'price_history') or [] }}"
+      _price: "{{ state_attr(_sensor, 'last_price') | float(0) | round(2) }}"
+      _avg: >-
+        {% if _history | length > 0 %}
+          {{ (((_history | map('float') | sum) / (_history | length)) | round(2)) }}
+        {% else %}
+          0
+        {% endif %}
+      name: "{{ state_attr(_sensor, 'friendly_name') | default(_sensor) }}"
+      price: "{{ _price }}"
+      avg: "{{ _avg }}"
+      pct_off: >-
+        {% set avg_f = _avg | float(0) %}
+        {% if avg_f > 0 %}
+          {{ (((avg_f - (_price | float(0))) / avg_f) * 100) | round(1) }}
+        {% else %}
+          0
+        {% endif %}
+      cutoff: "{{ states('sensor.azure_standard_next_cutoff') }}"
+      product_sensor: !input product_sensor
+      threshold_pct: !input threshold_pct
+      min_samples: !input min_samples
+
+  - action: !input notify_target
+    data:
+      title: !input title_template
+      message: !input message_template

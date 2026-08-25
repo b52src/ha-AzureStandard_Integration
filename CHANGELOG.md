@@ -1,5 +1,89 @@
 # Changelog
 
+## [0.2.0] - 2025-08-10
+
+### Added
+- **Price drop alert blueprint** (`azure_standard_price_drop.yaml`) — fires a
+  notification when a tracked product's `last_price` drops to or below a
+  configurable fraction of its rolling average (`price_history`).
+  - Single-product input: user selects one `sensor.azure_standard_*_last_ordered`
+    entity per automation instance.
+  - `threshold_pct` input (default `0.95`) controls how far below the average
+    the price must fall before the alert fires (e.g. 0.95 = 5% discount).
+  - `min_samples` input (default `3`) guards against firing on insufficient
+    history — alert is suppressed until at least N price history entries exist.
+  - Notification body and title are fully templated; default message includes
+    product name, current price, rolling average, percentage off, and next
+    cutoff date (`sensor.azure_standard_next_cutoff`).
+  - Trigger uses `state` on `last_price` attribute; dynamic threshold
+    comparison is done in the condition via `value_template`.
+
+## [0.1.9] - 2025-08-10
+
+### Added
+- **Cutoff countdown Lovelace card** (`azure-standard-cutoff-card`) — a
+  compact, standalone card that displays days-until-cutoff with urgency
+  color coding independently of the sidebar panel.
+  - Green when the order window is open and days > 3.
+  - Amber when days ≤ 3.
+  - Red when days ≤ 1 or the order window is closed.
+  - Subtitle shows the next cutoff date; optional pickup date row
+    (controlled by `show_pickup`, default `true`).
+  - Optional `title` config key (default `"Azure Standard"`).
+  - Registers itself in `window.customCards` so it appears in the
+    Lovelace card picker.
+  - Served at `/azure_standard_panel/azure-standard-cutoff-card.js`
+    (same static path as the sidebar panel JS — no additional Python
+    changes required).
+  - Full Shadow DOM, pure vanilla JS, no external dependencies.
+  - Targets ~120 px tall in default state for grid layouts.
+
+## [0.1.8] - 2025-08-10
+
+### Added
+- **Panel config UI** — a permanent ⚙ Settings tab in the sidebar panel lets
+  users show or hide the Lists, Products, and Account tabs independently.
+  - Summary tab is always visible (cannot be hidden).
+  - Preferences are saved to `localStorage` under
+    `azure_standard_panel_tab_visibility` and survive HA restarts and browser
+    reloads with no Python or HA storage changes required.
+  - Hiding the currently active tab automatically returns the view to Summary.
+  - A "Reset to defaults" button restores all three tabs to visible in one click.
+  - Settings tab is visually distinct (right-aligned gear icon) so it never
+    crowds the content tabs.
+
+## [0.1.7] - 2025-08-10
+
+### Added
+- **Automation blueprints** — three ready-to-import YAML blueprints in
+  `custom_components/azure_standard/blueprints/`:
+  - `azure_standard_cutoff_approaching.yaml` — notify N days before the
+    order cutoff; configurable threshold (1–14 days), message template,
+    and notify target.  Fires only while the order window is still open.
+  - `azure_standard_order_window_opened.yaml` — notify the moment the
+    order window opens (rising-edge trigger on
+    `binary_sensor.azure_standard_order_window_open`).
+  - `azure_standard_reorder_due.yaml` — notify when tracked products are
+    overdue for reorder; configurable minimum count, message template, and
+    optional hourly repeat cadence (0 = once, 24 = daily, etc.).
+
+## [0.1.6] - 2025-08-10
+
+### Added
+- **Unseen reorder badge** — the Products tab badge now only appears when the
+  reorder-due count has *increased* since the user last visited the Products tab.
+  Visiting the tab clears the badge. Re-ordering a product (which lowers the count)
+  never shows a stale badge.
+- **Reorder alert banner** — a soft amber banner appears on the Summary tab when
+  there are unseen reorder-due products. Includes a "View Products →" button that
+  jumps directly to the Products tab and marks all items as seen.
+
+### Changed
+- `_seenReorderCount` instance variable added to `AzureStandardPanel`; initialised
+  to `0` in `constructor()`.
+- Tab-click handler now sets `_seenReorderCount = reorderCount` when switching to
+  the Products tab.
+
 ## [0.1.5] - 2025-08-09
 
 ### Added

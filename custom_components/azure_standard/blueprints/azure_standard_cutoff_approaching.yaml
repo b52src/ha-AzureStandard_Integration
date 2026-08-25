@@ -1,0 +1,80 @@
+blueprint:
+  name: "Azure Standard — Cutoff Approaching"
+  description: >
+    Sends a notification when the Azure Standard order cutoff is a
+    specified number of days away. Useful for a "last chance" reminder
+    before the order window closes.
+
+    **Required entities (provided by the Azure Standard integration):**
+    - `sensor.azure_standard_days_until_cutoff`
+    - `sensor.azure_standard_next_cutoff`
+    - `binary_sensor.azure_standard_order_window_open`
+
+    The automation only fires when the order window is still open, so you
+    will not receive a reminder after the cutoff has already passed.
+  domain: automation
+  input:
+    days_threshold:
+      name: Days before cutoff to notify
+      description: >
+        Trigger the notification when `days_until_cutoff` first reaches
+        this value. For example, set to `2` to be notified two days before
+        the order window closes.
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 14
+          unit_of_measurement: days
+          mode: slider
+
+    notify_target:
+      name: Notification target
+      description: >
+        The `notify.*` service to call, e.g. `notify.mobile_app_my_phone`
+        or `notify.persistent_notification`.
+      selector:
+        text: {}
+
+    message_template:
+      name: Notification message
+      description: >
+        Message body. You can use template variables — `{{ days }}` for the
+        days remaining and `{{ cutoff }}` for the cutoff date.
+      default: "Your Azure Standard order closes in {{ days }} day(s) — add items before {{ cutoff }}!"
+      selector:
+        text:
+          multiline: true
+
+    title_template:
+      name: Notification title
+      description: >
+        Notification title. Supports the same `{{ days }}` and `{{ cutoff }}`
+        template variables.
+      default: "Azure Standard order closing soon"
+      selector:
+        text: {}
+
+triggers:
+  - trigger: numeric_state
+    entity_id: sensor.azure_standard_days_until_cutoff
+    below: !input days_threshold
+    # Fire once when the countdown first crosses the threshold; not every
+    # subsequent poll while it is still below.
+    for:
+      seconds: 0
+
+conditions:
+  # Only fire while the order window is open.
+  - condition: state
+    entity_id: binary_sensor.azure_standard_order_window_open
+    state: "on"
+
+actions:
+  - variables:
+      days: "{{ states('sensor.azure_standard_days_until_cutoff') }}"
+      cutoff: "{{ states('sensor.azure_standard_next_cutoff') }}"
+  - action: !input notify_target
+    data:
+      title: !input title_template
+      message: !input message_template

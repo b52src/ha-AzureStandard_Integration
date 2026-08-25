@@ -1,7 +1,7 @@
 {
   "domain": "azure_standard",
   "name": "Azure Standard",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "documentation": "https://forgejo.crow-nest.xyz/scrow/AzureStandard_Intigration",
   "issue_tracker": "https://forgejo.crow-nest.xyz/scrow/AzureStandard_Intigration/issues",
   "dependencies": ["frontend"],
