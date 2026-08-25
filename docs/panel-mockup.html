@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Azure Standard Panel Mockup</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px;
+    background: #f3f4f6;
+    color: #1f2328;
+    line-height: 1.6;
+    padding: 32px 16px 64px;
+  }
+  .page-title { text-align: center; font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+  .page-sub   { text-align: center; font-size: 13px; color: #57606a; margin-bottom: 28px; }
+
+  /* ── HA chrome shell ── */
+  .ha-shell {
+    display: flex;
+    max-width: 1100px;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid #d0d7de;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0,0,0,.10);
+  }
+  .ha-sidebar {
+    width: 68px;
+    background: #1c1c1e;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 0;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .ha-sidebar .brand {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: #16a34a;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 10px;
+  }
+  .ha-sidebar .brand svg { width: 20px; height: 20px; fill: #fff; }
+  .nav-item {
+    width: 48px; height: 48px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .nav-item svg { width: 22px; height: 22px; fill: #6b7280; }
+  .nav-item.active { background: #16a34a; }
+  .nav-item.active svg { fill: #fff; }
+
+  /* panel */
+  .ha-main    { flex: 1; background: #f7f8fa; overflow: auto; }
+  .panel      { max-width: 780px; margin: 0 auto; padding: 24px 20px 48px; }
+  .panel-header {
+    display: flex; align-items: center; gap: 14px; margin-bottom: 20px;
+  }
+  .logo-box {
+    width: 40px; height: 40px; background: #16a34a;
+    border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .logo-box svg { width: 22px; height: 22px; fill: #fff; }
+  h1 { font-size: 22px; font-weight: 700; flex: 1; }
+  .subtitle { font-size: 13px; color: #57606a; }
+  .refresh-btn {
+    background: none; border: 1px solid #e5e7eb; border-radius: 8px;
+    width: 36px; height: 36px; font-size: 18px; cursor: pointer;
+    color: #57606a; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  /* tab bar */
+  .tab-bar { display: flex; gap: 2px; border-bottom: 2px solid #e5e7eb; margin-bottom: 20px; }
+  .tab {
+    background: none; border: none;
+    border-bottom: 3px solid transparent; margin-bottom: -2px;
+    padding: 8px 16px; font-size: 14px; font-weight: 500;
+    color: #57606a; cursor: pointer; border-radius: 6px 6px 0 0;
+    display: flex; align-items: center; gap: 6px; font-family: inherit;
+  }
+  .tab.active { color: #16a34a; border-bottom-color: #16a34a; font-weight: 700; }
+  .tab-badge {
+    background: #dc2626; color: #fff; font-size: 10px; font-weight: 700;
+    padding: 1px 5px; border-radius: 8px; min-width: 16px; text-align: center;
+  }
+  /* cards */
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
+  h2 { font-size: 15px; font-weight: 700; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid #e5e7eb; }
+  .kv-grid { display: grid; grid-template-columns: 160px 1fr; gap: 6px 12px; align-items: baseline; }
+  .label  { font-size: 13px; color: #57606a; }
+  .value  { font-weight: 500; }
+  .soon   { color: #d97706; font-weight: 600; }
+  .urgent { color: #dc2626; font-weight: 700; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+  .badge-open   { background: #d1fae5; color: #065f46; }
+  .badge-closed { background: #fee2e2; color: #991b1b; }
+  /* lists */
+  .list-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .list-name  { font-weight: 600; font-size: 14px; text-transform: capitalize; }
+  .list-count { font-size: 12px; color: #57606a; }
+  .list-items { list-style: disc; margin-left: 18px; font-size: 13px; }
+  .list-items li { padding: 2px 0; }
+  .list-items li.more { color: #57606a; list-style: none; margin-left: -4px; font-style: italic; }
+  .list-actions { margin-top: 12px; padding-top: 10px; border-top: 1px solid #e5e7eb; }
+  .card-actions { margin-bottom: 16px; }
+  .btn-link {
+    display: inline-block; font-size: 13px; font-weight: 600;
+    color: #16a34a; text-decoration: none; padding: 6px 12px;
+    border: 1px solid #16a34a; border-radius: 8px;
+  }
+  .product-link { color: #16a34a; text-decoration: none; font-weight: 500; }
+  /* table */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    background: #f7f8fa; text-align: left; padding: 7px 10px;
+    border: 1px solid #e5e7eb; font-weight: 600; font-size: 11px;
+    color: #57606a; text-transform: uppercase; letter-spacing: .5px;
+  }
+  td { padding: 6px 10px; border: 1px solid #e5e7eb; vertical-align: middle; }
+  td.num, td.center { text-align: center; }
+  td.sparkline-cell { text-align: center; padding: 4px 8px; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  tr.reorder-due td { background: #fff7ed; }
+  tr.reorder-due td:first-child { font-weight: 600; color: #c2410c; }
+  .empty-state { color: #57606a; font-style: italic; padding: 24px 0; text-align: center; }
+  .panel-footer { margin-top: 32px; text-align: center; font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 12px; }
+  .tab-content { display: none; }
+  .tab-content.visible { display: block; }
+
+  /* ── Roadmap ── */
+  .roadmap-section { max-width: 780px; margin: 40px auto 0; }
+  .roadmap-title { font-size: 17px; font-weight: 700; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #e5e7eb; }
+  .phase-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; display: flex; gap: 14px; align-items: flex-start; }
+  .phase-num { font-size: 12px; font-weight: 700; border: 1px solid #e5e7eb; border-radius: 6px; padding: 3px 8px; white-space: nowrap; color: #57606a; flex-shrink: 0; margin-top: 2px; }
+  .phase-num.done    { background: #d1fae5; border-color: #a7f3d0; color: #065f46; }
+  .phase-num.next    { background: #fef3c7; border-color: #fde68a; color: #92400e; }
+  .phase-num.planned { background: #eff6ff; border-color: #bfdbfe; color: #1e40af; }
+  .phase-body h3  { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .phase-body p   { font-size: 13px; color: #57606a; line-height: 1.5; }
+  .phase-body ul  { font-size: 13px; color: #57606a; margin-left: 16px; margin-top: 4px; }
+  .phase-body li  { padding: 1px 0; }
+  .vtag {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 6px;
+    padding: 1px 7px; color: #57606a; margin-left: 8px; vertical-align: middle;
+  }
+  .made-with { text-align: center; font-size: 12px; color: #9ca3af; margin-top: 40px; padding-top: 12px; border-top: 1px solid #e5e7eb; max-width: 780px; margin-left: auto; margin-right: auto; }
+</style>
+</head>
+<body>
+
+<div class="page-title">Azure Standard — Sidebar Panel Mockup</div>
+<div class="page-sub">v0.1.4 &nbsp;·&nbsp; Click the tabs to switch views</div>
+
+<div class="ha-shell">
+  <!-- HA sidebar chrome -->
+  <div class="ha-sidebar">
+    <div class="brand"><svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg></div>
+    <div class="nav-item"><svg viewBox="0 0 24 24"><path d="M13 3v7h8V3m-8 18h8v-8h-8M3 21h8v-7H3m0-11v7h8V3z"/></svg></div>
+    <div class="nav-item"><svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></div>
+    <div class="nav-item active" title="Azure Standard">
+      <svg viewBox="0 0 24 24"><path d="M17 8C8 10 5.9 16.17 3.82 21.34L5.71 22l1-2.3A4.49 4.49 0 0 0 8 20C19 20 22 3 22 3c-1 2-8 2-12 2.5 1 .5 4 1.5 4 1.5S13 12 9 13.5C9 11 12 8 17 8z"/></svg>
+    </div>
+  </div>
+
+  <!-- Panel -->
+  <div class="ha-main">
+    <div class="panel">
+
+      <div class="panel-header">
+        <div class="logo-box">
+          <svg viewBox="0 0 24 24"><path d="M17 8C8 10 5.9 16.17 3.82 21.34L5.71 22l1-2.3A4.49 4.49 0 0 0 8 20C19 20 22 3 22 3c-1 2-8 2-12 2.5 1 .5 4 1.5 4 1.5S13 12 9 13.5C9 11 12 8 17 8z"/></svg>
+        </div>
+        <div>
+          <h1>Azure Standard</h1>
+          <div class="subtitle">Portland Drop #47 — Burnside</div>
+        </div>
+        <button class="refresh-btn" title="Refresh data">↻</button>
+      </div>
+
+      <div class="tab-bar" id="tab-bar">
+        <button class="tab active" data-tab="summary">Summary</button>
+        <button class="tab" data-tab="lists">Lists <span class="tab-badge">3</span></button>
+        <button class="tab" data-tab="products">Products <span class="tab-badge">2</span></button>
+        <button class="tab" data-tab="account">Account</button>
+      </div>
+
+      <!-- Summary -->
+      <div class="tab-content visible" id="tab-summary">
+        <div class="card">
+          <h2>Drop &amp; Cutoff</h2>
+          <div class="kv-grid">
+            <span class="label">Order window</span><span><span class="badge badge-open">OPEN</span></span>
+            <span class="label">Next cutoff</span><span class="value soon">Wed Jul 16 at 11:59 PM</span>
+            <span class="label">Days until cutoff</span><span class="value soon">3</span>
+            <span class="label">Delivery</span><span class="value">Thu Jul 24</span>
+            <span class="label">Pickup date</span><span class="value">Sat Jul 26</span>
+            <span class="label">Pickup week</span><span class="value">Week 30</span>
+            <span class="label">Days until pickup</span><span class="value">13</span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Active Order</h2>
+          <div class="kv-grid">
+            <span class="label">Status</span><span class="value">pending <span class="badge badge-open">placed</span></span>
+            <span class="label">Items in cart</span><span class="value">8</span>
+            <span class="label">Order total</span><span class="value">$147.32</span>
+            <span class="label">Last order</span><span class="value">Jun 28, 2025</span>
+            <span class="label">Account credit</span><span class="value">$12.50</span>
+            <span class="label">Pending payment</span><span class="value">$0.00</span>
+          </div>
+          <div class="list-actions">
+            <a class="btn-link" href="#">View order on Azure Standard ↗</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Lists -->
+      <div class="tab-content" id="tab-lists">
+        <div class="card">
+          <div class="list-header"><span class="list-name">Staples list</span><span class="list-count">7 items</span></div>
+          <ul class="list-items">
+            <li>Organic Rolled Oats — 5 lb</li><li>Raw Honey — 3 lb</li>
+            <li>Coconut Oil — 32 oz</li><li>Apple Cider Vinegar — 32 oz</li>
+            <li>Brown Rice — 10 lb</li><li class="more">+2 more…</li>
+          </ul>
+          <div class="list-actions"><a class="btn-link" href="#">Edit on Azure Standard ↗</a></div>
+        </div>
+        <div class="card">
+          <div class="list-header"><span class="list-name">Baking list</span><span class="list-count">4 items</span></div>
+          <ul class="list-items">
+            <li>Almond Flour — 5 lb</li><li>Baking Powder — 10 oz</li>
+            <li>Vanilla Extract — 4 oz</li><li>Cane Sugar — 5 lb</li>
+          </ul>
+          <div class="list-actions"><a class="btn-link" href="#">Edit on Azure Standard ↗</a></div>
+        </div>
+        <div class="card">
+          <div class="list-header"><span class="list-name">Try next list</span><span class="list-count">2 items</span></div>
+          <ul class="list-items"><li>Tahini — 16 oz</li><li>Maca Powder — 8 oz</li></ul>
+          <div class="list-actions"><a class="btn-link" href="#">Edit on Azure Standard ↗</a></div>
+        </div>
+      </div>
+
+      <!-- Products -->
+      <div class="tab-content" id="tab-products">
+        <div class="card">
+          <table>
+            <thead>
+              <tr>
+                <th>Product</th><th>Last ordered</th><th>Price</th>
+                <th>Times</th><th>Days since</th><th>Avg cycle</th><th>Reorder</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="reorder-due">
+                <td><a class="product-link" href="#">Organic Rolled Oats 5 lb</a></td>
+                <td>Jun 28, 2025</td>
+                <td class="sparkline-cell">
+                  <svg width="40" height="20" viewBox="0 0 40 20" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:auto">
+                    <polyline points="2,16 9,13 16,15 23,10 30,8 38,6" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+                    <circle cx="38" cy="6" r="2" fill="#16a34a"/>
+                  </svg>
+                </td>
+                <td class="num">6</td><td class="num">18</td><td class="num">~31d</td><td class="center">✓</td>
+              </tr>
+              <tr class="reorder-due">
+                <td><a class="product-link" href="#">Raw Honey 3 lb</a></td>
+                <td>May 14, 2025</td>
+                <td class="sparkline-cell">
+                  <svg width="40" height="20" viewBox="0 0 40 20" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:auto">
+                    <polyline points="2,12 9,14 16,10 23,11 30,9 38,15" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+                    <circle cx="38" cy="15" r="2" fill="#16a34a"/>
+                  </svg>
+                </td>
+                <td class="num">4</td><td class="num">57</td><td class="num">~45d</td><td class="center">✓</td>
+              </tr>
+              <tr>
+                <td><a class="product-link" href="#">Coconut Oil 32 oz</a></td>
+                <td>Jun 28, 2025</td>
+                <td class="sparkline-cell">
+                  <svg width="40" height="20" viewBox="0 0 40 20" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:auto">
+                    <polyline points="2,10 9,11 16,9 23,10 30,9 38,7" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+                    <circle cx="38" cy="7" r="2" fill="#16a34a"/>
+                  </svg>
+                </td>
+                <td class="num">5</td><td class="num">18</td><td class="num">~38d</td><td class="center"></td>
+              </tr>
+              <tr>
+                <td><a class="product-link" href="#">Brown Rice 10 lb</a></td>
+                <td>Jun 28, 2025</td>
+                <td class="sparkline-cell">—</td>
+                <td class="num">3</td><td class="num">18</td><td class="num">~62d</td><td class="center"></td>
+              </tr>
+              <tr>
+                <td><a class="product-link" href="#">Apple Cider Vinegar 32 oz</a></td>
+                <td>May 14, 2025</td>
+                <td class="sparkline-cell">
+                  <svg width="40" height="20" viewBox="0 0 40 20" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:auto">
+                    <polyline points="2,14 9,13 16,14 23,13 30,12 38,11" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+                    <circle cx="38" cy="11" r="2" fill="#16a34a"/>
+                  </svg>
+                </td>
+                <td class="num">7</td><td class="num">57</td><td class="num">~28d</td><td class="center"></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card-actions"><a class="btn-link" href="#">Shop on Azure Standard ↗</a></div>
+      </div>
+
+      <!-- Account -->
+      <div class="tab-content" id="tab-account">
+        <div class="card">
+          <h2>Account</h2>
+          <div class="kv-grid">
+            <span class="label">Account credit</span><span class="value">$12.50</span>
+            <span class="label">Pending payment</span><span class="value">$0.00</span>
+            <span class="label">Last order date</span><span class="value">Jun 28, 2025</span>
+            <span class="label">Active order status</span><span class="value">pending</span>
+          </div>
+          <div class="list-actions"><a class="btn-link" href="#">View active order ↗</a></div>
+        </div>
+        <div class="card-actions"><a class="btn-link" href="#">Order history on Azure Standard ↗</a></div>
+      </div>
+
+      <div class="panel-footer">Azure Standard integration · v0.1.4</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Phase Roadmap ═══ -->
+<div class="roadmap-section">
+  <div class="roadmap-title">📋 Phase Roadmap</div>
+
+  <div class="phase-card">
+    <div class="phase-num done">✅ 1–10</div>
+    <div class="phase-body">
+      <h3>Core Integration <span class="vtag">v0.1.0</span></h3>
+      <p>Scaffold, public drop/cutoff sensors, account login config flow, order sensors, shopping list sensors, product discovery engine, per-product sensor groups, options flow, account sensors, HACS polish.</p>
+    </div>
+  </div>
+
+  <div class="phase-card">
+    <div class="phase-num done">✅ 11</div>
+    <div class="phase-body">
+      <h3>Sidebar Panel — Web Component <span class="vtag">v0.1.1</span></h3>
+      <p>ES6 Web Component registered via <code>panel_custom</code>. Reads all <code>sensor.azure_standard_*</code> entities live from <code>hass.states</code>. Renders Drop &amp; Cutoff, Active Order, Lists, and Products sections.</p>
+    </div>
+  </div>
+
+  <div class="phase-card">
+    <div class="phase-num done">✅ 12 / 12b</div>
+    <div class="phase-body">
+      <h3>Four-Tab Redesign + Deep-Links <span class="vtag">v0.1.2</span> / <span class="vtag">v0.1.3</span></h3>
+      <p>Migrated to <code>async_register_static_paths</code>. Four-tab layout with ↻ refresh button. Real deep-link URLs for lists, orders, and product pages on azurestandard.com.</p>
+    </div>
+  </div>
+
+  <div class="phase-card">
+    <div class="phase-num done">✅ 13</div>
+    <div class="phase-body">
+      <h3>Price History Sparklines <span class="vtag">v0.1.4</span></h3>
+      <p>Rolling price history (up to 12 samples) accumulated in the coordinator. Inline 40×20 px SVG sparklines in the Products tab "Price" column. In-memory only — resets on HA restart.</p>
+    </div>
+  </div>
+
+  <div class="phase-card" style="border-color:#fde68a">
+    <div class="phase-num next">⭐ 14 — NEXT</div>
+    <div class="phase-body">
+      <h3>Panel Config UI — Show/Hide Tabs <span class="vtag">v0.1.5</span></h3>
+      <p>Let users choose which tabs are visible, persisted across restarts via HA's storage API.</p>
+      <ul>
+        <li>Gear icon in panel header opens an inline settings drawer</li>
+        <li>Toggle checkboxes for Lists, Products, and Account tabs</li>
+        <li>Settings written to <code>.storage/azure_standard_panel_config</code> via <code>hass.callWS</code></li>
+        <li>Prefs loaded on first render — default: all tabs visible</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase-card">
+    <div class="phase-num planned">⬜ 15</div>
+    <div class="phase-body">
+      <h3>Sidebar Notifications Badge <span class="vtag">v0.1.6</span></h3>
+      <p>Show a reorder-due count on the sidebar icon so users see how many products need reordering at a glance.</p>
+      <ul>
+        <li>Count products where <code>reorder_due = "true"</code></li>
+        <li>Update panel registration with a badge overlay or <code>icon_color</code></li>
+        <li>Clears when all reorder-due products are ordered</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase-card">
+    <div class="phase-num planned">⬜ 16</div>
+    <div class="phase-body">
+      <h3>Automation Blueprints <span class="vtag">v0.1.7</span></h3>
+      <p>Pre-built HA automation blueprints shipped with the integration.</p>
+      <ul>
+        <li><strong>Cutoff approaching</strong> — notify N days before next cutoff</li>
+        <li><strong>Order window opened</strong> — alert when <code>order_window_open</code> turns <code>on</code></li>
+        <li><strong>Reorder reminder</strong> — daily check for products with <code>reorder_due = true</code></li>
+        <li>Blueprints in <code>blueprints/azure_standard/</code>, auto-imported on setup</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase-card" style="background:#fafbfc">
+    <div class="phase-num">💡 Future</div>
+    <div class="phase-body">
+      <h3>Backlog Ideas</h3>
+      <ul>
+        <li><strong>Price persistence</strong> — write <code>price_history</code> to <code>.storage</code> so it survives restarts (<code>STORAGE_KEY_PRICE_HISTORY</code> already in <code>const.py</code>)</li>
+        <li><strong>Sparkline hover tooltips</strong> — show price value on pointer-over</li>
+        <li><strong>Per-product price alerts</strong> — notify on significant price change</li>
+        <li><strong>Drop location map card</strong> — embed pickup address in a Lovelace map card</li>
+        <li><strong>Multi-drop support</strong> — track multiple drop locations simultaneously</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="made-with">Made with IBM Bob</div>
+
+<script>
+  document.getElementById('tab-bar').querySelectorAll('.tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('visible'));
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('visible');
+    });
+  });
+</script>
+</body>
+</html>

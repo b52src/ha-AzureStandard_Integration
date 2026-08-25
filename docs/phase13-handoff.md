@@ -99,3 +99,14 @@ and returns `float(pkg["price"])`. Returns `None` on any error or no-match.
   few tracked products won't see a meaningful sparkline for several days.
 - The sparkline shows no price labels or axis ticks. Hover tooltip support could
   be added in a future phase.
+
+---
+
+## Release
+
+```bash
+fj release create "v0.1.4" --tag v0.1.4 --body "..."
+fj release list   # confirm v0.1.4 appears
+```
+
+Tag `v0.1.4` and the Forgejo release were created as part of this phase.
