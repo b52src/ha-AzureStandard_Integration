@@ -1,6 +1,6 @@
 /**
  * Azure Standard — Sidebar Panel
- * Phase 13 / v0.1.4
+ * Phase 14 / v0.1.5
  *
  * Four tabs (account-mode tabs hidden in manual mode):
  *   1. Summary   — Drop & Cutoff + Active Order snapshot
@@ -374,7 +374,7 @@ class AzureStandardPanel extends HTMLElement {
         <div class="tab-bar">${tabBar}</div>
         <div class="tab-content">${tabContent}</div>
 
-        <div class="footer">Azure Standard integration · v0.1.2</div>
+        <div class="footer">Azure Standard integration · v0.1.5</div>
       </div>
     `;
 

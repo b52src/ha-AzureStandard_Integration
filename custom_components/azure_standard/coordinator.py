@@ -14,6 +14,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import AzureStandardApiClient
@@ -283,9 +284,20 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
         # Cache of product_id → human-readable name, persists across coordinator updates
         self._product_name_cache: dict[int, str] = {}
 
-        # Rolling price history keyed by packaging_code; survives refreshes.
+        # Rolling price history keyed by packaging_code; survives refreshes
+        # AND HA restarts (loaded/saved via HA's storage helper).
         # Each entry is a list of floats capped at _PRICE_HISTORY_MAX entries.
         self._price_history: dict[str, list[float]] = {}
+
+        # Storage backend for price history persistence
+        self._store: Store = Store(
+            hass,
+            STORAGE_VERSION,
+            STORAGE_KEY_PRICE_HISTORY,
+        )
+        # Schedule an async load from disk so history is available before the
+        # first price fetch.  We can't await in __init__, so we create a task.
+        hass.async_create_task(self._async_load_price_history())
 
         # Timestamps controlling account-data sub-intervals
         self._last_orders_fetch: datetime | None = None
@@ -308,6 +320,39 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
     def register_platform_callback(self, platform: Platform, callback: Any) -> None:
         """Register an *async_add_entities* callback for a platform."""
         self._platform_callbacks[platform] = callback
+
+    # ------------------------------------------------------------------
+    # Price-history persistence helpers
+    # ------------------------------------------------------------------
+
+    async def _async_load_price_history(self) -> None:
+        """Restore price history from HA's .storage directory on startup.
+
+        Silently ignores any missing or malformed data so a fresh install or
+        a corrupted store file starts with an empty history rather than raising.
+        """
+        try:
+            stored = await self._store.async_load()
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Could not load price history from storage; starting fresh.")
+            return
+        if not isinstance(stored, dict):
+            return
+        for code, values in stored.items():
+            if isinstance(values, list):
+                # Clamp to the current window size in case the constant changed
+                valid = [float(v) for v in values if isinstance(v, (int, float))]
+                self._price_history[code] = valid[-_PRICE_HISTORY_MAX:]
+        _LOGGER.debug(
+            "Loaded price history for %d product(s) from storage.", len(self._price_history)
+        )
+
+    async def _async_save_price_history(self) -> None:
+        """Persist the current price history dict to HA's .storage directory."""
+        try:
+            await self._store.async_save(dict(self._price_history))
+        except Exception:  # noqa: BLE001
+            _LOGGER.warning("Could not save price history to storage.")
 
     # ------------------------------------------------------------------
     # Re-authentication helper
@@ -667,6 +712,8 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
                     except (aiohttp.ClientError, UpdateFailed):
                         _LOGGER.debug("Could not fetch price for tracked product %s", code)
                 result.price_history = {k: list(v) for k, v in self._price_history.items()}
+                # Persist updated history so it survives HA restarts
+                await self._async_save_price_history()
 
                 if new_suggestions:
                     _fire_suggestion_notification(self.hass, new_suggestions)

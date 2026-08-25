@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.5] - 2025-08-09
+
+### Added
+- **Persistent price history** — price history is now saved to HA's
+  `.storage/azure_standard.price_history` file after every daily refresh and
+  reloaded on startup. Data survives Home Assistant restarts; the sparkline
+  populates immediately after reboot without waiting for the next 24 h cycle.
+
+### Changed
+- `AzureStandardCoordinator` now creates a `homeassistant.helpers.storage.Store`
+  instance on `__init__` and schedules `_async_load_price_history()` as a task so
+  the restored data is available before the first coordinator update runs.
+- `_async_save_price_history()` is called once per history-fetch cycle (after all
+  tracked-product prices have been appended to the rolling window).
+- Invalid or non-numeric entries in the stored data are silently discarded; entries
+  beyond `_PRICE_HISTORY_MAX` are clamped so changing the constant is safe.
+
 ## [0.1.4] - 2025-08-09
 
 ### Added
