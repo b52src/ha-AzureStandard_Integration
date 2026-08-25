@@ -77,6 +77,15 @@
       "delivery_date": {
         "name": "Delivery date"
       },
+      "pickup_date": {
+        "name": "Pickup date"
+      },
+      "pickup_week": {
+        "name": "Pickup week"
+      },
+      "days_until_pickup": {
+        "name": "Days until pickup"
+      },
       "active_order_status": {
         "name": "Active order status"
       },

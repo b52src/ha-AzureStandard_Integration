@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0] - 2025-07-19
+
+### Fixed
+- **Pickup date/week sensors always `Unknown`** — the `trip-date` field from the drop's `order-frequency` array was never extracted. `_find_next_cutoff` now returns it as a third value; the coordinator derives `pickup_week` (ISO week string, e.g. `2025-W37`) and `days_until_pickup` from it.
+- **Product tracking shows raw SKU codes** — the options flow and per-product sensor names now display the human-readable product name (e.g. "Raw Wildflower Honey (SW033)") instead of just the SKU code. Names are resolved via `GET /products/{id}` on first encounter and cached across coordinator updates.
+
+### Added
+- **`Pickup date` sensor** (`sensor.azure_standard_pickup_date`) — DATE device class, sourced from `trip-date` in the drop schedule.
+- **`Pickup week` sensor** (`sensor.azure_standard_pickup_week`) — ISO week identifier string, e.g. `2025-W37`.
+- **`Days until pickup` sensor** (`sensor.azure_standard_days_until_pickup`) — integer countdown from today to the structured pickup date.
+- **Product name cache in coordinator** — `_product_name_cache` (dict[product_id → name]) persists for the lifetime of the config entry, so product names are fetched only once per product.
+
 ## [0.0.7] - 2025-07-15
 
 ### Fixed

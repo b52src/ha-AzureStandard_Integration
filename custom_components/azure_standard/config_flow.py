@@ -102,7 +102,11 @@ class AzureStandardOptionsFlowHandler(config_entries.OptionsFlow):
             candidate_options = [
                 SelectOptionDict(
                     value=s.code,
-                    label=f"{s.code} — ordered {s.order_count}× (last: {s.last_ordered})",
+                    label=(
+                        f"{s.name} ({s.code})"
+                        if s.name
+                        else s.code
+                    ) + f" — ordered {s.order_count}× (last: {s.last_ordered})",
                 )
                 for s in candidates
                 if s.is_candidate

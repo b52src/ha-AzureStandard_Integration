@@ -56,6 +56,9 @@ async def async_setup_entry(
         DaysUntilCutoffSensor(coordinator),
         DropNameSensor(coordinator),
         DeliveryDateSensor(coordinator),
+        PickupDateSensor(coordinator),
+        PickupWeekSensor(coordinator),
+        DaysUntilPickupSensor(coordinator),
     ]
 
     # Order and account sensors — account mode only
@@ -196,6 +199,57 @@ class DeliveryDateSensor(AzureStandardEntity, SensorEntity):
     def native_value(self) -> str | None:
         """Return the next delivery window string, e.g. 'Week of Sep 13'."""
         return self.coordinator.data.delivery_date if self.coordinator.data else None
+
+
+class PickupDateSensor(AzureStandardEntity, SensorEntity):
+    """Structured pickup date parsed from the drop's trip-date field."""
+
+    _attr_translation_key = "pickup_date"
+    _attr_device_class = SensorDeviceClass.DATE
+    _attr_icon = "mdi:calendar-check"
+
+    def __init__(self, coordinator: AzureStandardCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_pickup_date"
+
+    @property
+    def native_value(self):
+        """Return the pickup date, or None if not available."""
+        return self.coordinator.data.pickup_date if self.coordinator.data else None
+
+
+class PickupWeekSensor(AzureStandardEntity, SensorEntity):
+    """ISO week identifier for the upcoming pickup (e.g. '2025-W37')."""
+
+    _attr_translation_key = "pickup_week"
+    _attr_icon = "mdi:calendar-week"
+
+    def __init__(self, coordinator: AzureStandardCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_pickup_week"
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the ISO week string, e.g. '2025-W37'."""
+        return self.coordinator.data.pickup_week if self.coordinator.data else None
+
+
+class DaysUntilPickupSensor(AzureStandardEntity, SensorEntity):
+    """Countdown in days until the next scheduled pickup."""
+
+    _attr_translation_key = "days_until_pickup"
+    _attr_native_unit_of_measurement = "days"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:timer-sand"
+
+    def __init__(self, coordinator: AzureStandardCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_days_until_pickup"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return days until pickup, or None if pickup date unknown."""
+        return self.coordinator.data.days_until_pickup if self.coordinator.data else None
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +580,15 @@ class _ProductSensorBase(AzureStandardEntity, SensorEntity):
         super().__init__(coordinator)
         self._code = code
         self._attr_unique_id = f"{DOMAIN}_{code.lower()}_{self._metric}"
-        self._attr_name = f"{code} {self._metric.replace('_', ' ').title()}"
+        # Name is set dynamically via native_name property once the product
+        # name resolves; _attr_name is left unset so we fall through to it.
+
+    @property
+    def name(self) -> str:
+        """Return human-readable name, falling back to SKU code if unresolved."""
+        stats = self._stats()
+        label = (stats.name or self._code) if stats else self._code
+        return f"{label} {self._metric.replace('_', ' ').title()}"
 
     def _stats(self) -> "ProductStats | None":
         """Return the ProductStats for this code, or None if unavailable."""

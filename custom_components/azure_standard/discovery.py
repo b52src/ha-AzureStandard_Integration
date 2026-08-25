@@ -48,6 +48,9 @@ class ProductStats:
     days_since_last_order: int | None   # (today - last_ordered).days
     is_candidate: bool                  # order_count >= min_purchase_count
 
+    # Resolved asynchronously — empty string until coordinator fetches the name
+    name: str = ""                      # human-readable product name from GET /products/{id}
+
 
 # ---------------------------------------------------------------------------
 # ProductDiscoveryEngine

@@ -52,6 +52,9 @@ class AzureStandardData:
     drop: dict | None = None
     next_cutoff: date | None = None
     delivery_date: str | None = None  # Raw string e.g. "Week of Sep 13" or "2025-09-13"
+    pickup_date: date | None = None   # Structured date from trip-date field
+    pickup_week: str | None = None    # ISO week string e.g. "2025-W37"
+    days_until_pickup: int | None = None  # (pickup_date - today).days
 
     # ---- Account (None if mode=manual or not yet fetched) ----
     active_order: dict | None = None
@@ -89,21 +92,24 @@ def _parse_date(value: str | None) -> date | None:
         return None
 
 
-def _find_next_cutoff(drop: dict) -> tuple[date | None, str | None]:
+def _find_next_cutoff(
+    drop: dict,
+) -> tuple[date | None, str | None, date | None]:
     """Extract the nearest future cutoff from a drop dict.
 
     Confirmed order-frequency shape from live API:
-      {"cutoff": "YYYY-MM-DD", "orders": N, "homeDeliveryOrders": [...],
-       "estimatedDelivery": "Week of Sep 13"}
+      {"cutoff": "YYYY-MM-DD", "trip-date": "YYYY-MM-DD", "orders": N,
+       "homeDeliveryOrders": [...], "estimatedDelivery": "Week of Sep 13"}
 
-    The delivery date from Azure Standard is often a descriptive string like
-    "Week of Sep 13" rather than an ISO date, so we store it as a raw string.
+    The delivery date is often a descriptive string like "Week of Sep 13";
+    the ``trip-date`` field carries the structured ISO pickup date.
 
-    Returns ``(next_cutoff_date, delivery_string)``.
+    Returns ``(next_cutoff_date, delivery_string, pickup_date)``.
     """
     today = date.today()
     best_cutoff: date | None = None
     best_delivery: str | None = None
+    best_pickup: date | None = None
 
     for freq in drop.get("order-frequency", []):
         if not isinstance(freq, dict):
@@ -122,8 +128,14 @@ def _find_next_cutoff(drop: dict) -> tuple[date | None, str | None]:
                 or freq.get("delivery")
             )
             best_delivery = str(raw).strip() if raw else None
+            # trip-date is the structured pickup date (ISO)
+            best_pickup = _parse_date(
+                freq.get("trip-date")
+                or freq.get("tripDate")
+                or freq.get("trip_date")
+            )
 
-    return best_cutoff, best_delivery
+    return best_cutoff, best_delivery, best_pickup
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +272,9 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
         # Tracking sets for dynamic entity creation
         self._known_list_ids: set[str] = set()
         self._known_product_codes: set[str] = set()
+
+        # Cache of product_id → human-readable name, persists across coordinator updates
+        self._product_name_cache: dict[int, str] = {}
 
         # Timestamps controlling account-data sub-intervals
         self._last_orders_fetch: datetime | None = None
@@ -404,12 +419,22 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
             # Keep previous drop data rather than wiping sensors
             drop = (self.data.drop if self.data else None) or {}
 
-        next_cutoff, delivery_date = _find_next_cutoff(drop)
+        next_cutoff, delivery_date, pickup_date = _find_next_cutoff(drop)
+
+        pickup_week: str | None = None
+        days_until_pickup: int | None = None
+        if pickup_date is not None:
+            today = date.today()
+            pickup_week = pickup_date.strftime("%G-W%V")
+            days_until_pickup = (pickup_date - today).days
 
         result = AzureStandardData(
             drop=drop,
             next_cutoff=next_cutoff,
             delivery_date=delivery_date,
+            pickup_date=pickup_date,
+            pickup_week=pickup_week,
+            days_until_pickup=days_until_pickup,
         )
 
         if mode != MODE_ACCOUNT:
@@ -589,6 +614,25 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
                 )
                 stats = engine.analyze(ordered)
                 result.product_stats = {s.code: s for s in stats}
+
+                # Resolve human-readable names for products lacking one.
+                # Uses a persistent cache so we only hit the API once per product_id.
+                for s in stats:
+                    if s.product_id and s.product_id not in self._product_name_cache:
+                        try:
+                            product = await self._authenticated_get(
+                                lambda pid_=s.product_id: self.client.get_product(pid_)
+                            )
+                            resolved = str(product.get("name") or "").strip()
+                            if resolved:
+                                self._product_name_cache[s.product_id] = resolved
+                        except (aiohttp.ClientError, UpdateFailed):
+                            _LOGGER.debug(
+                                "Could not resolve name for product_id=%s", s.product_id
+                            )
+                    cached = self._product_name_cache.get(s.product_id, "")
+                    if cached:
+                        s.name = cached
 
                 tracked: set[str] = set(
                     self.entry.options.get(CONF_TRACKED_PRODUCTS, [])
