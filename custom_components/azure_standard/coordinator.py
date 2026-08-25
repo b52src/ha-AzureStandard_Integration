@@ -8,6 +8,7 @@ from typing import Any
 
 import aiohttp
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -175,7 +176,8 @@ def _fire_suggestion_notification(hass: Any, suggestions: list[Any]) -> None:
     if count > 5:
         codes += f" … and {count - 5} more"
 
-    hass.components.persistent_notification.async_create(
+    persistent_notification.async_create(
+        hass,
         (
             f"Azure Standard found **{count} product{'s' if count != 1 else ''}** "
             f"you order regularly that could have dedicated sensors created:\n\n"
@@ -309,14 +311,27 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
     async def _authenticated_get(self, coro_factory) -> Any:
         """Execute *coro_factory()* and retry once after re-auth on 401/403.
 
+        If the retry also gets a 401/403, raises :class:`ConfigEntryAuthFailed`
+        so the error propagates past the catch-and-swallow blocks in
+        ``_async_update_data`` and reaches HA's coordinator machinery.
+
         :param coro_factory: Zero-argument callable that returns a coroutine.
         """
         try:
             return await coro_factory()
         except aiohttp.ClientResponseError as err:
-            if err.status in (401, 403):
-                await self._reauth()
-            raise
+            if err.status not in (401, 403):
+                raise
+            await self._reauth()
+            try:
+                return await coro_factory()
+            except aiohttp.ClientResponseError as retry_err:
+                if retry_err.status in (401, 403):
+                    raise ConfigEntryAuthFailed(
+                        "Re-authenticated but requests are still being rejected. "
+                        "Please reconfigure the integration."
+                    ) from retry_err
+                raise
 
     # ------------------------------------------------------------------
     # Sub-interval predicates
@@ -384,7 +399,8 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
             try:
                 valid = await self.client.validate_session()
             except aiohttp.ClientError:
-                valid = False
+                # Network error — skip reauth, the next update will retry
+                valid = True
             if not valid:
                 await self._reauth()
 
