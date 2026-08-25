@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.1.3] - 2025-08-09
+
+### Added
+- **Real link-out URLs** in the sidebar panel — links now deep-link to exact pages
+  on the Azure Standard website rather than generic paths:
+  - **Lists tab** — each "Edit on Azure Standard ↗" button links to
+    `/my-account/lists/{list_id}` using the `list_id` attribute on the list sensor.
+  - **Summary & Account tabs** — "View order" button links to
+    `/my-account/order/{order_id}` using the `order_id` attribute on the order
+    status sensor (shown only when an active order exists).
+  - **Products tab** — each product name is a clickable link to
+    `/shop/product/{slug}/{product_id}?package={code}` using the new `product_id`
+    and `code` attributes added to `ProductLastOrderedSensor`.
+- **`product_id`, `code`, `last_order_id` attributes** on
+  `ProductLastOrderedSensor` — sourced from `ProductStats`; enables deep-links
+  without any extra API calls.
+
+## [0.1.2] - 2025-08-09
+
+### Fixed
+- **`register_static_path` AttributeError on startup** — `HomeAssistantHTTP` removed this
+  synchronous method in HA 2024.x. Replaced with the async equivalent:
+  `await hass.http.async_register_static_paths([StaticPathConfig(...)])`.
+  The integration now starts cleanly on current HA releases.
+
+### Changed
+- **Sidebar panel redesigned with four tabs** (Phase 12):
+  - **Summary** — Drop & Cutoff countdown + Active Order snapshot on one screen.
+  - **Lists** — Shopping lists with item previews; each list card has an
+    "Edit on Azure Standard ↗" link that opens the site in a new tab.
+    No in-panel list editing.
+  - **Products** — Tracked products table now includes an **Avg cycle** column
+    (estimated days between orders = days_since ÷ (times − 1)). Reorder-due
+    products are highlighted in amber; the tab shows a red badge with the count.
+  - **Account** — Credit, pending payment, last order date, and a link to the
+    Azure Standard order history page.
+- **↻ Refresh button** in the panel header triggers `homeassistant.update_entity`
+  on the drop-name sensor, forcing a coordinator refresh without a full HA reload.
+- Tab selection persists across hass state-change re-renders (no tab-reset on poll).
+- Account-only tabs (Lists, Products, Account) are hidden when in manual mode.
+
 ## [0.1.1] - 2025-07-20
 
 ### Added

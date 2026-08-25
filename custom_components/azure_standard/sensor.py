@@ -610,6 +610,18 @@ class ProductLastOrderedSensor(_ProductSensorBase):
         stats = self._stats()
         return stats.last_ordered if stats else None
 
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Expose product_id, code, and last_order_id for panel link-outs."""
+        stats = self._stats()
+        if not stats:
+            return {}
+        return {
+            "product_id": stats.product_id,
+            "code": stats.code,
+            "last_order_id": stats.last_order_id,
+        }
+
 
 class ProductTimesOrderedSensor(_ProductSensorBase):
     """Total number of times this product has been ordered."""

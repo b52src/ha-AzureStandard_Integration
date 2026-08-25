@@ -5,6 +5,7 @@ import logging
 import pathlib
 
 from homeassistant.components import panel_custom
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -19,21 +20,22 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 # Panel registration constants
-_PANEL_URL    = "/api/panel_custom/azure_standard"
-_PANEL_JS     = "azure-standard-panel.js"
+_PANEL_JS      = "azure-standard-panel.js"
 _PANEL_ELEMENT = "azure-standard-panel"
-_PANEL_TITLE  = "Azure Standard"
-_PANEL_ICON   = "mdi:sprout"
+_PANEL_TITLE   = "Azure Standard"
+_PANEL_ICON    = "mdi:sprout"
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Register the www/ directory so HA serves the panel JS file."""
     www_path = pathlib.Path(__file__).parent / "www"
-    hass.http.register_static_path(
-        "/azure_standard_panel",
-        str(www_path),
-        cache_headers=True,
-    )
+    await hass.http.async_register_static_paths([
+        StaticPathConfig(
+            url_path="/azure_standard_panel",
+            path=str(www_path),
+            cache_headers=True,
+        )
+    ])
     return True
 
 
