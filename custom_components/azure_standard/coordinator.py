@@ -35,10 +35,14 @@ from .const import (
     SCAN_INTERVAL_ORDERS,
     SCAN_INTERVAL_PUBLIC,
     SCAN_INTERVAL_SESSION,
+    STORAGE_KEY_PRICE_HISTORY,
+    STORAGE_VERSION,
 )
 from .discovery import ProductDiscoveryEngine
 
 _LOGGER = logging.getLogger(__name__)
+
+_PRICE_HISTORY_MAX = 12  # rolling window — oldest entry dropped when full
 
 
 @dataclass
@@ -75,6 +79,9 @@ class AzureStandardData:
     suggested_products: list[Any] = field(default_factory=list)
     tracked_products: list[str] = field(default_factory=list)
     newly_confirmed_products: list[str] = field(default_factory=list)
+
+    # ---- Price history (rolling, keyed by packaging_code) ----
+    price_history: dict[str, list[float]] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +282,10 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
 
         # Cache of product_id → human-readable name, persists across coordinator updates
         self._product_name_cache: dict[int, str] = {}
+
+        # Rolling price history keyed by packaging_code; survives refreshes.
+        # Each entry is a list of floats capped at _PRICE_HISTORY_MAX entries.
+        self._price_history: dict[str, list[float]] = {}
 
         # Timestamps controlling account-data sub-intervals
         self._last_orders_fetch: datetime | None = None
@@ -640,6 +651,23 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
                 new_suggestions = engine.get_new_suggestions(stats, tracked)
                 result.suggested_products = new_suggestions
 
+                # ---- Price history: fetch current price for each tracked product ----
+                # We only sample price at the history-fetch cadence (daily) so the
+                # rolling list grows at most 1 entry per refresh.
+                for code in tracked:
+                    try:
+                        price = await self._authenticated_get(
+                            lambda c=code: self.client.get_product_price(c)
+                        )
+                        if price is not None:
+                            history = self._price_history.setdefault(code, [])
+                            history.append(round(float(price), 4))
+                            if len(history) > _PRICE_HISTORY_MAX:
+                                del history[0]
+                    except (aiohttp.ClientError, UpdateFailed):
+                        _LOGGER.debug("Could not fetch price for tracked product %s", code)
+                result.price_history = {k: list(v) for k, v in self._price_history.items()}
+
                 if new_suggestions:
                     _fire_suggestion_notification(self.hass, new_suggestions)
 
@@ -660,6 +688,7 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
                     result.ordered_products = self.data.ordered_products
                     result.product_stats = self.data.product_stats
                     result.suggested_products = self.data.suggested_products
+                    result.price_history = self.data.price_history
                 _LOGGER.warning(
                     "Failed to refresh purchase history; keeping previous data."
                 )
@@ -667,6 +696,7 @@ class AzureStandardCoordinator(DataUpdateCoordinator[AzureStandardData]):
             result.ordered_products = self.data.ordered_products
             result.product_stats = self.data.product_stats
             result.suggested_products = self.data.suggested_products
+            result.price_history = self.data.price_history
 
         # ---- Shopping lists (every SCAN_INTERVAL_LISTS) ----
         if self._lists_due():

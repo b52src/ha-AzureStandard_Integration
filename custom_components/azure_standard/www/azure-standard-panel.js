@@ -1,6 +1,6 @@
 /**
  * Azure Standard — Sidebar Panel
- * Phase 12 / v0.1.2
+ * Phase 13 / v0.1.4
  *
  * Four tabs (account-mode tabs hidden in manual mode):
  *   1. Summary   — Drop & Cutoff + Active Order snapshot
@@ -274,10 +274,14 @@ class AzureStandardPanel extends HTMLElement {
       const nameCell    = productLink
         ? `<a class="product-link" href="${productLink}" target="_blank" rel="noopener noreferrer">${this._escHtml(name)}</a>`
         : this._escHtml(name);
+      // Sparkline from price_history attribute
+      const priceHistory = this._attr(id, "price_history", []);
+      const sparkCell   = this._sparkline(priceHistory);
       return `
         <tr class="${reorder === "true" ? "reorder-due" : ""}">
           <td>${nameCell}</td>
           <td>${last}</td>
+          <td class="sparkline-cell">${sparkCell}</td>
           <td class="num">${times}</td>
           <td class="num">${daysSince}</td>
           <td class="num">${avgDays !== "—" ? "~" + avgDays + "d" : "—"}</td>
@@ -293,6 +297,7 @@ class AzureStandardPanel extends HTMLElement {
               <tr>
                 <th>Product</th>
                 <th>Last ordered</th>
+                <th>Price</th>
                 <th>Times</th>
                 <th>Days since</th>
                 <th>Avg cycle</th>
@@ -588,6 +593,7 @@ class AzureStandardPanel extends HTMLElement {
         vertical-align: middle;
       }
       td.num, td.center { text-align: center; }
+      td.sparkline-cell { text-align: center; padding: 4px 8px; }
       tr:nth-child(even) td { background: var(--secondary-background-color, #fafbfc); }
       tr.reorder-due td { background: #fff7ed; }
       tr.reorder-due td:first-child { font-weight: 600; color: #c2410c; }
@@ -619,6 +625,35 @@ class AzureStandardPanel extends HTMLElement {
   }
 
   // ---------------------------------------------------------------- utilities
+
+  /**
+   * Render an inline SVG sparkline (40×20 px) for an array of price floats.
+   * Returns a '—' string when fewer than 2 data points are available.
+   *
+   * @param {number[]} history - Array of price floats, oldest first.
+   * @returns {string} SVG markup or '—'.
+   */
+  _sparkline(history) {
+    if (!Array.isArray(history) || history.length < 2) return "—";
+    const W = 40, H = 20, PAD = 2;
+    const min = Math.min(...history);
+    const max = Math.max(...history);
+    const range = max - min || 1;  // avoid divide-by-zero when all prices equal
+    const xStep = (W - PAD * 2) / (history.length - 1);
+    const points = history.map((v, i) => {
+      const x = PAD + i * xStep;
+      const y = PAD + (1 - (v - min) / range) * (H - PAD * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    // Highlight the rightmost (current) point
+    const lastParts = points.split(" ").pop().split(",");
+    const cx = parseFloat(lastParts[0]);
+    const cy = parseFloat(lastParts[1]);
+    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="display:block">` +
+      `<polyline points="${points}" fill="none" stroke="#16a34a" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>` +
+      `<circle cx="${cx}" cy="${cy}" r="2" fill="#16a34a"/>` +
+      `</svg>`;
+  }
 
   _escHtml(str) {
     return String(str)

@@ -612,14 +612,20 @@ class ProductLastOrderedSensor(_ProductSensorBase):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Expose product_id, code, and last_order_id for panel link-outs."""
+        """Expose product_id, code, last_order_id, last_price, and price_history."""
         stats = self._stats()
         if not stats:
             return {}
+        history: list[float] = []
+        if self.coordinator.data:
+            history = list(self.coordinator.data.price_history.get(stats.code, []))
+        last_price = history[-1] if history else None
         return {
             "product_id": stats.product_id,
             "code": stats.code,
             "last_order_id": stats.last_order_id,
+            "last_price": last_price,
+            "price_history": history,
         }
 
 

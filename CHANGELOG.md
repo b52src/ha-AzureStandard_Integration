@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.4] - 2025-08-09
+
+### Added
+- **Price history sparkline** in the Products tab — each tracked product row now
+  shows an inline 40×20 px SVG sparkline in a new "Price" column, displaying up
+  to 12 historical price samples with the current price highlighted by a dot.
+  Renders `—` until at least 2 price points have been collected.
+- **`price_history` and `last_price` attributes** on `ProductLastOrderedSensor` —
+  `price_history` is a list of floats (oldest first, capped at 12), `last_price`
+  is the most recent sampled price or `null` if none yet.
+- **Price accumulation in coordinator** — during each `_history_due()` refresh
+  (daily cadence), the coordinator calls `get_product_price(code)` for every
+  tracked product and appends the result to a rolling list stored in
+  `AzureStandardData.price_history`.  The in-memory accumulator
+  (`_price_history`) persists across refreshes so history is never reset.
+- **`STORAGE_KEY_PRICE_HISTORY` / `STORAGE_VERSION`** constants were already
+  present in `const.py`; now imported by the coordinator.
+
 ## [0.1.3] - 2025-08-09
 
 ### Added
