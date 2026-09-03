@@ -1,6 +1,6 @@
 /**
  * Azure Standard — Sidebar Panel
- * Phase 17 / v0.1.8
+ * Phase 20 / v0.2.2
  *
  * Four content tabs (account-mode tabs hidden in manual mode):
  *   1. Summary   — Drop & Cutoff + Active Order snapshot
@@ -9,18 +9,18 @@
  *   4. Account   — Credit, pending payment, order history
  *
  * Plus one persistent tab:
- *   ⚙ Settings — toggle which content tabs are visible; saved to localStorage.
+ *   ⚙ Settings — toggle tab visibility, per-product show/hide, compact mode.
  *
  * Tab state (`this._tab`) persists across re-renders triggered by hass state
  * updates so the user's selected tab doesn't reset on every poll.
  *
- * Phase 17 notes:
- *   - Settings tab added (⚙ icon, always visible, always last).
- *   - Three toggleable tabs: Lists, Products, Account (Summary is always on).
- *   - Visibility preferences stored in localStorage under
- *     "azure_standard_panel_tab_visibility" as a JSON object.
- *   - Hiding a tab while it is active switches view to Summary.
- *   - A "Reset to defaults" button restores all three tabs to visible.
+ * Phase 20 additions:
+ *   - Per-product show/hide: each tracked product can be hidden individually
+ *     from the Products tab via checkboxes in Settings.
+ *     Stored in localStorage under "azure_standard_panel_product_vis".
+ *   - Compact / expanded Products view toggle: compact mode shows a condensed
+ *     two-column view (name + reorder indicator only) instead of the full table.
+ *     Stored in localStorage under "azure_standard_panel_compact".
  */
 
 const AZURE_STANDARD_URL  = "https://www.azurestandard.com";
@@ -28,8 +28,10 @@ const _LISTS_BASE   = `${AZURE_STANDARD_URL}/my-account/lists`;
 const _ORDERS_BASE  = `${AZURE_STANDARD_URL}/my-account/order`;
 const _SHOP_BASE    = `${AZURE_STANDARD_URL}/shop/product`;
 
-const _STORAGE_KEY = "azure_standard_panel_tab_visibility";
-const _TAB_DEFAULTS = { lists: true, products: true, account: true };
+const _STORAGE_KEY         = "azure_standard_panel_tab_visibility";
+const _PRODUCT_VIS_KEY     = "azure_standard_panel_product_vis";
+const _COMPACT_KEY         = "azure_standard_panel_compact";
+const _TAB_DEFAULTS        = { lists: true, products: true, account: true };
 
 class AzureStandardPanel extends HTMLElement {
   // ------------------------------------------------------------------ setup
@@ -43,6 +45,10 @@ class AzureStandardPanel extends HTMLElement {
     this._seenReorderCount = 0;
     // Per-tab visibility (lists / products / account).  Summary is always on.
     this._tabVis = this._loadTabVis();
+    // Per-product visibility: object keyed by product code → bool (default true).
+    this._productVis = this._loadProductVis();
+    // Compact mode for Products tab (bool, default false).
+    this._compact = this._loadCompact();
   }
 
   set hass(hass) {
@@ -75,6 +81,40 @@ class AzureStandardPanel extends HTMLElement {
     try {
       localStorage.setItem(_STORAGE_KEY, JSON.stringify(this._tabVis));
     } catch (_) { /* ignore quota/security errors */ }
+  }
+
+  _loadProductVis() {
+    try {
+      const raw = localStorage.getItem(_PRODUCT_VIS_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch (_) { /* ignore */ }
+    return {};
+  }
+
+  _saveProductVis() {
+    try {
+      localStorage.setItem(_PRODUCT_VIS_KEY, JSON.stringify(this._productVis));
+    } catch (_) { /* ignore */ }
+  }
+
+  _loadCompact() {
+    try {
+      const raw = localStorage.getItem(_COMPACT_KEY);
+      if (raw !== null) return JSON.parse(raw) === true;
+    } catch (_) { /* ignore */ }
+    return false;
+  }
+
+  _saveCompact() {
+    try {
+      localStorage.setItem(_COMPACT_KEY, JSON.stringify(this._compact));
+    } catch (_) { /* ignore */ }
+  }
+
+  // Returns true if the product with this code should be shown.
+  // Defaults to visible when no explicit preference is stored.
+  _isProductVisible(code) {
+    return this._productVis[code] !== false;
   }
 
   // ----------------------------------------------------------------- helpers
@@ -312,7 +352,14 @@ class AzureStandardPanel extends HTMLElement {
          </div>`;
 
     // ── Products tab ──────────────────────────────────────────────────────
-    const productRows = e.productEntities.map((id) => {
+    // Filter to only the products the user has chosen to show.
+    const visibleProductEntities = e.productEntities
+      .filter((id) => {
+        const code = id.replace("sensor.azure_standard_", "").replace("_last_ordered", "");
+        return this._isProductVisible(code);
+      });
+
+    const buildProductData = (id) => {
       const code        = id.replace("sensor.azure_standard_", "").replace("_last_ordered", "");
       const timesId     = `sensor.azure_standard_${code}_times_ordered`;
       const daysSinceId = `sensor.azure_standard_${code}_days_since`;
@@ -322,40 +369,76 @@ class AzureStandardPanel extends HTMLElement {
       const times       = this._state(timesId);
       const daysSince   = this._state(daysSinceId);
       const reorder     = this._state(reorderId);
-      // Avg cycle: days_since / (times − 1)
       const timesNum    = parseInt(times, 10);
       const daysNum     = parseInt(daysSince, 10);
       const avgDays     = (!isNaN(timesNum) && timesNum > 1 && !isNaN(daysNum))
-                          ? Math.round(daysNum / (timesNum - 1))
-                          : "—";
-      // Product page link — product_id + code exposed as attrs on last_ordered sensor
+                          ? Math.round(daysNum / (timesNum - 1)) : "—";
       const productId   = this._attr(id, "product_id", null);
       const pkgCode     = this._attr(id, "code", code.toUpperCase());
       const nameSlug    = this._escHtml(name).toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
       const productLink = (productId && productId !== "—")
-        ? `${_SHOP_BASE}/${nameSlug}/${productId}?package=${pkgCode}`
-        : null;
+        ? `${_SHOP_BASE}/${nameSlug}/${productId}?package=${pkgCode}` : null;
       const nameCell    = productLink
         ? `<a class="product-link" href="${productLink}" target="_blank" rel="noopener noreferrer">${this._escHtml(name)}</a>`
         : this._escHtml(name);
-      // Sparkline from price_history attribute
       const priceHistory = this._attr(id, "price_history", []);
       const sparkCell   = this._sparkline(priceHistory);
+      return { code, name, nameCell, last, times, daysSince, reorder, avgDays, sparkCell };
+    };
+
+    // Compact view: two-column list — name + reorder badge
+    const compactRows = visibleProductEntities.map((id) => {
+      const d = buildProductData(id);
       return `
-        <tr class="${reorder === "true" ? "reorder-due" : ""}">
-          <td>${nameCell}</td>
-          <td>${last}</td>
-          <td class="sparkline-cell">${sparkCell}</td>
-          <td class="num">${times}</td>
-          <td class="num">${daysSince}</td>
-          <td class="num">${avgDays !== "—" ? "~" + avgDays + "d" : "—"}</td>
-          <td class="center">${reorder === "true" ? "✓" : ""}</td>
+        <tr class="${d.reorder === "true" ? "reorder-due" : ""}">
+          <td>${d.nameCell}</td>
+          <td class="center">${d.reorder === "true" ? '<span class="badge badge-reorder">Reorder</span>' : ""}</td>
         </tr>`;
     }).join("");
 
+    // Expanded view: full 7-column table
+    const expandedRows = visibleProductEntities.map((id) => {
+      const d = buildProductData(id);
+      return `
+        <tr class="${d.reorder === "true" ? "reorder-due" : ""}">
+          <td>${d.nameCell}</td>
+          <td>${d.last}</td>
+          <td class="sparkline-cell">${d.sparkCell}</td>
+          <td class="num">${d.times}</td>
+          <td class="num">${d.daysSince}</td>
+          <td class="num">${d.avgDays !== "—" ? "~" + d.avgDays + "d" : "—"}</td>
+          <td class="center">${d.reorder === "true" ? "✓" : ""}</td>
+        </tr>`;
+    }).join("");
+
+    const hiddenCount = e.productEntities.length - visibleProductEntities.length;
+    const hiddenNote  = hiddenCount > 0
+      ? `<p class="hidden-note">${hiddenCount} product${hiddenCount > 1 ? "s" : ""} hidden · <button class="btn-text" id="go-settings-products">Manage in Settings</button></p>`
+      : "";
+
+    const compactToggleBar = e.productEntities.length
+      ? `<div class="compact-toggle-bar">
+           <label class="compact-toggle-label">
+             <input type="checkbox" id="toggle-compact" ${this._compact ? "checked" : ""} />
+             Compact view
+           </label>
+         </div>`
+      : "";
+
     const productsTab = e.productEntities.length
       ? `
+        ${compactToggleBar}
         <section class="card">
+          ${this._compact ? `
+          <table>
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Reorder</th>
+              </tr>
+            </thead>
+            <tbody>${compactRows || '<tr><td colspan="2" class="empty-state">All products hidden.</td></tr>'}</tbody>
+          </table>` : `
           <table>
             <thead>
               <tr>
@@ -368,9 +451,10 @@ class AzureStandardPanel extends HTMLElement {
                 <th>Reorder</th>
               </tr>
             </thead>
-            <tbody>${productRows}</tbody>
-          </table>
+            <tbody>${expandedRows || '<tr><td colspan="7" class="empty-state">All products hidden.</td></tr>'}</tbody>
+          </table>`}
         </section>
+        ${hiddenNote}
         <div class="card-actions">
           <a class="btn-link"
              href="${AZURE_STANDARD_URL}/shop"
@@ -413,13 +497,26 @@ class AzureStandardPanel extends HTMLElement {
       </div>`;
 
     // ── Settings tab ──────────────────────────────────────────────────────
-    // Checkboxes to show/hide Lists, Products, and Account tabs.
-    // Summary is always visible and rendered as a disabled, checked item.
+    // Per-product visibility checkboxes (generated from live entity list).
+    const productVisRows = e.productEntities.length
+      ? e.productEntities.map((id) => {
+          const code = id.replace("sensor.azure_standard_", "").replace("_last_ordered", "");
+          const name = this._attr(id, "friendly_name") || code.replace(/_/g, " ");
+          const checked = this._isProductVisible(code) ? "checked" : "";
+          return `
+            <label class="settings-row settings-row-product">
+              <input type="checkbox" class="product-vis-cb" data-code="${this._escHtml(code)}" ${checked} />
+              <span class="settings-label">${this._escHtml(name)}</span>
+            </label>`;
+        }).join("")
+      : `<p class="settings-no-products">No tracked products configured.</p>`;
+
     const settingsTab = `
       <section class="card">
         <h2>Panel settings</h2>
-        <p class="settings-desc">Choose which tabs appear in this panel.
-          Changes are saved automatically and persist across reloads.</p>
+
+        <h3 class="settings-section-title">Tabs</h3>
+        <p class="settings-desc">Choose which tabs appear in this panel.</p>
         <div class="settings-rows">
           <label class="settings-row settings-row-disabled">
             <input type="checkbox" checked disabled />
@@ -441,6 +538,19 @@ class AzureStandardPanel extends HTMLElement {
             <span class="settings-label">Account</span>
             <span class="settings-note">Credit, payments &amp; order history</span>
           </label>
+        </div>
+
+        <h3 class="settings-section-title">Products view</h3>
+        <p class="settings-desc">Choose which products appear in the Products tab and how they are displayed.</p>
+        <div class="settings-rows">
+          <label class="settings-row">
+            <input type="checkbox" id="toggle-compact-settings" ${this._compact ? "checked" : ""} />
+            <span class="settings-label">Compact view</span>
+            <span class="settings-note">Show only product name and reorder status</span>
+          </label>
+        </div>
+        <div class="settings-rows settings-rows-products">
+          ${productVisRows}
         </div>
         <div class="settings-footer">
           <button class="btn-reset" id="btn-reset-vis">Reset to defaults</button>
@@ -474,7 +584,7 @@ class AzureStandardPanel extends HTMLElement {
         <div class="tab-bar">${tabBar}</div>
         <div class="tab-content">${tabContent}</div>
 
-        <div class="footer">Azure Standard integration · v0.1.8</div>
+        <div class="footer">Azure Standard integration · v0.2.2</div>
       </div>
     `;
 
@@ -496,22 +606,55 @@ class AzureStandardPanel extends HTMLElement {
       this._render();
     });
 
-    // Settings — visibility checkboxes
+    // Products tab — compact toggle (in the Products tab bar itself)
+    this.shadowRoot.getElementById("toggle-compact")?.addEventListener("change", (ev) => {
+      this._compact = ev.target.checked;
+      this._saveCompact();
+      this._render();
+    });
+
+    // Products tab — "Manage in Settings" shortcut link
+    this.shadowRoot.getElementById("go-settings-products")?.addEventListener("click", () => {
+      this._tab = "settings";
+      this._render();
+    });
+
+    // Settings — tab visibility checkboxes
     ["lists", "products", "account"].forEach((key) => {
       const el = this.shadowRoot.getElementById(`vis-${key}`);
       el?.addEventListener("change", () => {
         this._tabVis[key] = el.checked;
         this._saveTabVis();
-        // If we just hid the currently active tab, fall back to summary.
         if (!el.checked && this._tab === key) this._tab = "summary";
         this._render();
       });
     });
 
-    // Settings — reset button
+    // Settings — compact toggle (mirror of the one on the Products tab)
+    this.shadowRoot.getElementById("toggle-compact-settings")?.addEventListener("change", (ev) => {
+      this._compact = ev.target.checked;
+      this._saveCompact();
+      this._render();
+    });
+
+    // Settings — per-product visibility checkboxes
+    this.shadowRoot.querySelectorAll(".product-vis-cb").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const code = cb.dataset.code;
+        this._productVis[code] = cb.checked;
+        this._saveProductVis();
+        this._render();
+      });
+    });
+
+    // Settings — reset button (resets tabs + product vis + compact)
     this.shadowRoot.getElementById("btn-reset-vis")?.addEventListener("click", () => {
-      this._tabVis = Object.assign({}, _TAB_DEFAULTS);
+      this._tabVis    = Object.assign({}, _TAB_DEFAULTS);
+      this._productVis = {};
+      this._compact   = false;
       this._saveTabVis();
+      this._saveProductVis();
+      this._saveCompact();
       this._render();
     });
 
@@ -835,6 +978,81 @@ class AzureStandardPanel extends HTMLElement {
         background: var(--secondary-background-color, #f7f8fa);
         border-color: var(--primary-text-color, #1f2328);
         color: var(--primary-text-color, #1f2328);
+      }
+
+      /* compact toggle bar (Products tab) */
+      .compact-toggle-bar {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        margin-bottom: 8px;
+      }
+      .compact-toggle-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--secondary-text-color, #57606a);
+        cursor: pointer;
+        user-select: none;
+      }
+      .compact-toggle-label input[type="checkbox"] {
+        accent-color: var(--primary-color, #16a34a);
+        width: 14px; height: 14px;
+        cursor: pointer;
+      }
+
+      /* reorder badge in compact view */
+      .badge-reorder {
+        background: #fee2e2;
+        color: #991b1b;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 2px 7px;
+        border-radius: 8px;
+        white-space: nowrap;
+      }
+
+      /* hidden products note */
+      .hidden-note {
+        font-size: 12px;
+        color: var(--secondary-text-color, #57606a);
+        margin-bottom: 8px;
+        text-align: right;
+      }
+      .btn-text {
+        background: none;
+        border: none;
+        padding: 0;
+        font-size: 12px;
+        font-family: inherit;
+        color: var(--primary-color, #16a34a);
+        cursor: pointer;
+        text-decoration: underline;
+      }
+
+      /* settings — section titles */
+      .settings-section-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--secondary-text-color, #57606a);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 6px;
+        margin-top: 20px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid var(--divider-color, #e5e7eb);
+      }
+
+      /* settings — product rows */
+      .settings-rows-products .settings-row-product {
+        padding: 7px 12px;
+      }
+      .settings-no-products {
+        font-size: 13px;
+        color: var(--secondary-text-color, #57606a);
+        font-style: italic;
+        padding: 8px 12px;
       }
 
       /* footer */

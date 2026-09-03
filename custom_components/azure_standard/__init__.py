@@ -25,9 +25,21 @@ _PANEL_ELEMENT    = "azure-standard-panel"
 _PANEL_TITLE      = "Azure Standard"
 _PANEL_ICON       = "mdi:sprout"
 
-# Lovelace card — served automatically from the same www/ static path.
-# URL: /azure_standard_panel/azure-standard-cutoff-card.js
-_CUTOFF_CARD_JS   = "azure-standard-cutoff-card.js"
+# Lovelace resources — both JS files auto-registered so users don't need the
+# manual "Settings → Dashboards → Resources" step.
+_LOVELACE_RESOURCES = [
+    {
+        "url": "/azure_standard_panel/azure-standard-cutoff-card.js",
+        "res_type": "module",
+    },
+    {
+        "url": "/azure_standard_panel/azure-standard-panel.js",
+        "res_type": "module",
+    },
+]
+
+# hass.data key for tracking which resource IDs we registered.
+_RESOURCE_IDS_KEY = f"{DOMAIN}_lovelace_resource_ids"
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -76,6 +88,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             config={},
         )
 
+    # Auto-register Lovelace resources (idempotent — only runs once across all
+    # config entries for this domain; skipped if URLs are already registered).
+    if _RESOURCE_IDS_KEY not in hass.data:
+        await _async_register_lovelace_resources(hass)
+
     return True
 
 
@@ -85,9 +102,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unloaded:
         hass.data[DOMAIN].pop(entry.entry_id)
 
-    # Remove the panel when the last config entry is unloaded.
+    # Remove the panel and deregister Lovelace resources when the last config
+    # entry is unloaded.
     if not hass.data.get(DOMAIN):
         hass.components.frontend.async_remove_panel(DOMAIN)
+        await _async_remove_lovelace_resources(hass)
 
     return unloaded
 
@@ -95,3 +114,88 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle options updates by reloading the config entry."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+# ---------------------------------------------------------------------------
+# Lovelace resource helpers
+# ---------------------------------------------------------------------------
+
+async def _async_register_lovelace_resources(hass: HomeAssistant) -> None:
+    """Add the integration's JS files to Lovelace resources if not present.
+
+    Uses the ``lovelace`` component's resource storage (HA 2022.12+). Any URL
+    already registered (by a previous run or a manual addition) is skipped so
+    this operation is idempotent.
+    """
+    try:
+        lovelace = hass.data.get("lovelace")
+        if lovelace is None or not hasattr(lovelace, "resources"):
+            _LOGGER.debug(
+                "azure_standard: lovelace resources API not available — "
+                "skipping auto-registration (user must add resources manually)"
+            )
+            return
+
+        resources = lovelace.resources
+        await resources.async_load(True)
+        existing_urls: set[str] = {
+            r["url"] for r in resources.async_items()
+        }
+
+        registered_ids: list[str] = []
+        for res in _LOVELACE_RESOURCES:
+            if res["url"] in existing_urls:
+                _LOGGER.debug(
+                    "azure_standard: Lovelace resource already registered: %s",
+                    res["url"],
+                )
+                continue
+            res_id = await resources.async_create_item(
+                {"res_type": res["res_type"], "url": res["url"]}
+            )
+            registered_ids.append(res_id)
+            _LOGGER.info(
+                "azure_standard: Registered Lovelace resource: %s", res["url"]
+            )
+
+        # Store resource IDs so we can remove them on unload.
+        hass.data[_RESOURCE_IDS_KEY] = registered_ids
+
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug(
+            "azure_standard: Could not auto-register Lovelace resources "
+            "(non-fatal — resources can be added manually)",
+            exc_info=True,
+        )
+
+
+async def _async_remove_lovelace_resources(hass: HomeAssistant) -> None:
+    """Remove previously auto-registered Lovelace resources."""
+    resource_ids: list[str] = hass.data.pop(_RESOURCE_IDS_KEY, [])
+    if not resource_ids:
+        return
+
+    try:
+        lovelace = hass.data.get("lovelace")
+        if lovelace is None or not hasattr(lovelace, "resources"):
+            return
+
+        resources = lovelace.resources
+        for res_id in resource_ids:
+            try:
+                await resources.async_delete_item(res_id)
+                _LOGGER.info(
+                    "azure_standard: Removed Lovelace resource id=%s", res_id
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug(
+                    "azure_standard: Could not remove Lovelace resource id=%s "
+                    "(may have been removed manually)",
+                    res_id,
+                    exc_info=True,
+                )
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug(
+            "azure_standard: Error removing Lovelace resources (non-fatal)",
+            exc_info=True,
+        )

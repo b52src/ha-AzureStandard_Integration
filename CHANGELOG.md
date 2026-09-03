@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.2.2] - 2025-08-10
+
+### Added
+- **Panel settings v2 — per-product show/hide** — individual tracked products
+  can now be hidden from the Products tab via checkboxes in the ⚙ Settings tab.
+  - Hidden products are excluded from the Products table and the reorder-due
+    badge count, but remain fully tracked by the integration.
+  - Preferences are stored in `localStorage` under
+    `azure_standard_panel_product_vis` (keyed by product code, default visible).
+  - A "N products hidden · Manage in Settings" note appears at the bottom of the
+    Products tab when any product is hidden, with a button that jumps directly
+    to the Settings tab.
+- **Panel settings v2 — compact Products view** — a toggle switches the
+  Products tab between the existing full 7-column table and a compact 2-column
+  view showing only the product name and a reorder badge.
+  - The toggle is available both directly in the Products tab (top-right) and
+    in the Settings tab under the new "Products view" section.
+  - State is stored in `localStorage` under `azure_standard_panel_compact`
+    (boolean, default `false`).
+- **Settings tab redesign** — the Settings tab now has two clearly labelled
+  sections: **Tabs** (existing show/hide controls) and **Products view** (new
+  compact toggle + per-product checkboxes).
+- **Reset to defaults** now also resets product visibility and compact mode in
+  addition to tab visibility.
+
+## [0.2.1] - 2025-08-10
+
+### Added
+- **Auto-register Lovelace resources** — both `azure-standard-cutoff-card.js`
+  and `azure-standard-panel.js` are now automatically registered as Lovelace
+  `module` resources when the integration sets up. Users no longer need to
+  manually add them via **Settings → Dashboards → Resources** before the
+  cutoff card appears in the card picker.
+  - Registration is idempotent: URLs already registered (from a previous run
+    or a manual addition) are left unchanged and not duplicated.
+  - Resources registered by the integration are removed when the last config
+    entry for the domain is unloaded.
+  - Gracefully degrades: if the Lovelace resource storage API is not available
+    (e.g. YAML-mode Lovelace), a debug log is emitted and setup continues
+    normally — manual resource addition still works as before.
+
 ## [0.2.0] - 2025-08-10
 
 ### Added
