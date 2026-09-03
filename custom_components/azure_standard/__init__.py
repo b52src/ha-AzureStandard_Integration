@@ -19,6 +19,14 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
+# Read version from manifest.json once at module load — used as a cache-buster
+# query string on the panel JS URL so browsers always fetch the latest file.
+_VERSION = (
+    __import__("json")
+    .loads((pathlib.Path(__file__).parent / "manifest.json").read_text())
+    .get("version", "0")
+)
+
 # Panel registration constants
 _PANEL_JS         = "azure-standard-panel.js"
 _PANEL_ELEMENT    = "azure-standard-panel"
@@ -49,7 +57,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         StaticPathConfig(
             url_path="/azure_standard_panel",
             path=str(www_path),
-            cache_headers=True,
+            cache_headers=False,
         )
     ])
     return True
@@ -81,7 +89,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass,
             webcomponent_name=_PANEL_ELEMENT,
             frontend_url_path=DOMAIN,
-            module_url=f"/azure_standard_panel/{_PANEL_JS}",
+            module_url=f"/azure_standard_panel/{_PANEL_JS}?v={_VERSION}",
             sidebar_title=_PANEL_TITLE,
             sidebar_icon=_PANEL_ICON,
             require_admin=False,
