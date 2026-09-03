@@ -47,6 +47,9 @@ class AzureStandardPanel extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    const fp = this._fingerprint();
+    if (fp === this._lastFingerprint) return;
+    this._lastFingerprint = fp;
     this._render();
   }
 
@@ -90,6 +93,22 @@ class AzureStandardPanel extends HTMLElement {
     return Object.keys(this._hass.states)
       .filter((id) => id.startsWith(prefix))
       .sort();
+  }
+
+  // Returns a string that changes whenever any azure_standard entity state or
+  // attributes change, so the hass setter can skip full re-renders when nothing
+  // relevant has updated.
+  _fingerprint() {
+    if (!this._hass?.states) return "";
+    return Object.keys(this._hass.states)
+      .filter((id) => id.startsWith("sensor.azure_standard_") ||
+                      id.startsWith("binary_sensor.azure_standard_"))
+      .sort()
+      .map((id) => {
+        const s = this._hass.states[id];
+        return `${id}:${s.state}:${s.last_updated}`;
+      })
+      .join("|");
   }
 
   _collectEntities() {
