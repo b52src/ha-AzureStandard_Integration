@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.3] - 2025-08-10
+
+### Fixed
+- **Panel JS browser cache** — the `www/` static path is now served with
+  `cache_headers=False` so HA sends no-cache headers. The panel `module_url` now
+  includes `?v={version}` (read from `manifest.json` at load time) so each version
+  bump produces a distinct URL, forcing the browser to discard any cached copy of
+  the panel JS and fetch the updated file.
+
 ## [0.2.2] - 2025-08-10
 
 ### Added

@@ -584,7 +584,7 @@ class AzureStandardPanel extends HTMLElement {
         <div class="tab-bar">${tabBar}</div>
         <div class="tab-content">${tabContent}</div>
 
-        <div class="footer">Azure Standard integration · v0.2.2</div>
+        <div class="footer">Azure Standard integration · v0.2.3</div>
       </div>
     `;
 
